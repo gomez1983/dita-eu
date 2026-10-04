@@ -271,7 +271,7 @@ class DictationApp(QtCore.QObject):
 
         print("[Dita-eu] Finalizado. Transcrevendo...")
         self.sig_show_processing.emit()
-        QtCore.QMetaObject.invokeMethod(self.hud_safety_timer, "start", QtCore.Qt.ConnectionType.QueuedConnection, QtCore.Q_ARG(int, 7000))
+        QtCore.QMetaObject.invokeMethod(self.hud_safety_timer, "start", QtCore.Qt.ConnectionType.QueuedConnection, QtCore.Q_ARG(int, 15000))
         threading.Thread(target=self._process_and_inject, daemon=True).start()
 
     def _on_hud_timeout(self):

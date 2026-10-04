@@ -27,7 +27,8 @@ def backspace_chars(count: int):
 def inject_text(text: str, restore_clipboard: bool = True):
     """
     Injeta o texto diretamente no controle de foco ativo via simulação de Ctrl+V.
-    Preserva o conteúdo anterior do clipboard caso restore_clipboard seja True.
+    Preserva o conteúdo anterior do clipboard caso restore_clipboard seja True,
+    aguardando a confirmação de leitura do aplicativo em foco antes de restaurar.
     """
     if not text:
         return
@@ -48,18 +49,22 @@ def inject_text(text: str, restore_clipboard: bool = True):
 
     try:
         pyperclip.copy(text)
-        time.sleep(0.03)
+        time.sleep(0.05)
 
         # Simula Ctrl+V
         _send_key_event(VK_CONTROL, 0)
         _send_key_event(VK_V, 0)
-        time.sleep(0.02)
+        time.sleep(0.03)
         _send_key_event(VK_V, KEYEVENTF_KEYUP)
         _send_key_event(VK_CONTROL, KEYEVENTF_KEYUP)
-        time.sleep(0.06)
-    finally:
-        if restore_clipboard and old_text is not None:
+
+        # Aguarda tempo suficiente (350ms) para que aplicativos mais lentos (VS Code, navegadores)
+        # terminem de consumir o Ctrl+V antes de restaurar o clipboard antigo
+        if restore_clipboard and old_text is not None and old_text != text:
+            time.sleep(0.35)
             try:
                 pyperclip.copy(old_text)
             except Exception:
                 pass
+    except Exception as e:
+        print(f"[Injector] Erro ao injetar texto: {e}")

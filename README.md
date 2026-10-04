@@ -18,15 +18,16 @@ Injeção direta no cursor ativo via simulação Win32, preservação do histór
 
 ## ⚡ Por que o Dita-eu?
 
-Muitas ferramentas de ditado são lentas, exigem navegadores abertos, colam dados bagunçados ou poluem o histórico de cópia do sistema. O **Dita-eu** foi desenhado com 5 princípios inegociáveis:
+Muitas ferramentas de ditado são lentas, exigem navegadores abertos, colam dados bagunçados ou poluem o histórico de cópia do sistema. O **Dita-eu** foi desenhado com princípios inegociáveis:
 
 1. **Push-to-Talk Instantâneo**: Segure a tecla configurada (ex: `F8`, `F6`, ou combos como `Shift + F4`) $\rightarrow$ fale $\rightarrow$ solte. O texto é transcrito e colado onde quer que esteja o cursor.
 2. **Preservação de Clipboard (`Win + V`)**: Não polui seu histórico nem apaga textos fixados. O que você tinha copiado antes é preservado e restaurado.
 3. **Não Rouba Foco (`WS_EX_NOACTIVATE`)**: A pílula na tela nunca rouba o foco do app onde você está digitando (VS Code, Notion, WhatsApp, Word, Slack, Terminais, etc.).
-4. **Duplo Motor de IA com Fallback**:
-   - **⚡ Groq Whisper (`whisper-large-v3-turbo`)**: Velocidade extrema de **~250ms a 350ms**.
-   - **✨ Google Gemini (`gemini-flash-latest`)**: Compreensão semântica profunda e pontuação expressiva.
-5. **Modo Claro & Escuro com Alto Contraste**: Padrão visual baseado nas diretrizes de acessibilidade **WCAG AAA / AA**, mantendo leitura perfeita em qualquer condição de luz.
+4. **🌐 Modo Tradução Coloquial Instantânea**: Traduz a fala em tempo real para **Inglês (`EN`)**, **Espanhol (`ES`)**, **Francês (`FR`)**, **Alemão (`DE`)** ou **Italiano (`IT`)**, preservando rigorosamente o tom natural, casual e coloquial da fala humana (sem soar como tradutor robótico). Alternável em 1 clique pelo menu da bandeja do sistema (System Tray).
+5. **Duplo Motor de IA com Fallback Automático**:
+   - **⚡ Groq Whisper (`whisper-large-v3-turbo`)**: Velocidade extrema de **~250ms a 350ms** e tradução ultrarrápida com LLMs de alta performance.
+   - **✨ Google Gemini (`gemini-flash-lite-latest`)**: Compreensão semântica profunda, cota gratuita generosa e resposta fluida.
+6. **Modo Claro & Escuro com Alto Contraste**: Padrão visual baseado nas diretrizes de acessibilidade **WCAG AAA / AA**, com alternância dinâmica de logotipo e controles em Toggle Switch estilo Windows 11.
 
 ---
 
@@ -158,7 +159,8 @@ dita-eu/
 ├── settings_ui.py        # Interface gráfica com detector de atalhos e seletor de tema
 ├── transcriber.py        # Clientes Groq Whisper Turbo e Google Gemini Flash com fallback
 ├── icon.ico              # Ícone para executável e barra de tarefas do Windows
-├── icon_white.png        # Ícone para UI
+├── icon.png              # Logotipo escuro para Modo Claro
+├── icon_white.png        # Logotipo claro para Modo Escuro
 ├── radio-mic.svg         # Vetor original
 ├── requirements.txt      # Dependências mínimas de produção
 ├── .env.example          # Modelo de variáveis de ambiente
@@ -171,6 +173,33 @@ dita-eu/
 ## 🛡️ Segurança & Privacidade
 - **Zero Vazamento**: Arquivos `.env`, `config.json` e chaves de API estão incluídos no `.gitignore` para proteção das credenciais.
 - **Áudio em Memória**: O áudio capturado pelo microfone nunca é gravado como arquivo temporário em disco; ele trafega exclusivamente na memória RAM e é descartado após o envio.
+
+---
+
+## 🗺️ Roadmap do Projeto
+
+### ✅ Concluído (v1.0 & Atualizações Recentes)
+- [x] **Push-to-Talk nativo com atalhos globais personalizáveis** (F8, F6, combos como `Shift + F4`).
+- [x] **Preservação de histórico da área de transferência (`Win + V`)** com delay de segurança de 350ms.
+- [x] **Pílula HUD flutuante moderna** inspirada no Wispr Flow, sem roubo de foco (`WS_EX_NOACTIVATE`) e com pulso dinâmico de volume.
+- [x] **Suporte a Modo Claro e Modo Escuro** sob critérios rigorosos de contraste **WCAG AAA**.
+- [x] **Toggle Switches modernos** estilo Windows 11 para alternância de tema e autoinicialização com o Windows.
+- [x] **Modo Tradução Coloquial Instantânea** para 5 idiomas (`EN`, `ES`, `FR`, `DE`, `IT`) com tom 100% natural e casual.
+- [x] **Submenu dinâmico na bandeja do sistema (System Tray)** para alternar o idioma de tradução instantaneamente.
+- [x] **Badge visual no HUD** indicando o idioma de tradução ativo (ex.: `🌐 EN`).
+- [x] **Arquitetura híbrida de IA com redundância**:
+  - Groq Whisper Turbo (~250ms) + LLM Groq (~250ms) com ~7.200 reqs/dia gratuitas.
+  - Google Gemini Flash Lite com ~1.500 reqs/dia gratuitas e fallback automático.
+- [x] **Watchdog de segurança contra congelamento de interface** e persistência protegida de credenciais para compilação `.exe`.
+
+### 📌 Próximos Passos (Futuro)
+- [ ] **Detecção Automática do Idioma de Entrada**: Falar em qualquer língua e o motor identificar o idioma sem configuração manual.
+- [ ] **Dicionário e Substituições Personalizadas**: Capacidade de cadastrar jargões técnicos específicos, siglas e nomes de projetos personalizados.
+- [ ] **Comandos de Voz e Formatação Direta**:
+  - Ex: "Novo parágrafo", "Ponto final", "Vírgula", ou modos especiais como "Reescrever em formato de e-mail".
+- [ ] **Histórico Local Opcional de Transcrições**: Painel retrátil seguro com busca local para consultar o que foi falado recentemente.
+- [ ] **Suporte a Botões do Mouse na Interface**: Detecção nativa dos botões laterais (Mouse 4 e Mouse 5) no seletor de atalhos.
+- [ ] **Suporte Multiplataforma**: Portabilidade da lógica para macOS e Linux.
 
 ---
 

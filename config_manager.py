@@ -3,13 +3,27 @@ import os
 import winreg
 import sys
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+def get_base_dir() -> str:
+    """Retorna o diretório base onde o aplicativo reside (mesmo congelado com PyInstaller)."""
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if os.path.exists(os.path.join(exe_dir, "config.json")) or os.path.exists(os.path.join(exe_dir, ".env")):
+            return exe_dir
+        parent_dir = os.path.dirname(exe_dir)
+        if os.path.exists(os.path.join(parent_dir, "config.json")) or os.path.exists(os.path.join(parent_dir, ".env")):
+            return parent_dir
+        return exe_dir
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+ENV_FILE = os.path.join(BASE_DIR, ".env")
 
 DEFAULT_CONFIG = {
     "engine": "groq",  # "groq" ou "gemini"
     "groq_api_key": os.getenv("GROQ_API_KEY", ""),
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
-    "gemini_model": "gemini-flash-latest",
+    "gemini_model": "gemini-flash-lite-latest",
     "trigger_keys": ["f8"],
     "microphone_index": None,
     "hud_bottom_offset": 350,
@@ -19,6 +33,13 @@ DEFAULT_CONFIG = {
 }
 
 def load_config() -> dict:
+    if os.path.exists(ENV_FILE):
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(ENV_FILE, override=False)
+        except Exception:
+            pass
+
     config = DEFAULT_CONFIG.copy()
     if os.path.exists(CONFIG_FILE):
         try:
@@ -36,9 +57,22 @@ def load_config() -> dict:
     if not config.get("gemini_api_key"):
         config["gemini_api_key"] = os.getenv("GEMINI_API_KEY", "")
 
+    # Migra modelo para gemini-flash-lite-latest caso esteja no gemini-flash-latest esgotado
+    if config.get("gemini_model") in ("gemini-flash-latest", "gemini-3.8-flash", "", None):
+        config["gemini_model"] = "gemini-flash-lite-latest"
+
     return config
 
 def save_config(config: dict):
+    # Proteção: preserva chaves de API caso o config recebido venha com chave em branco
+    if not config.get("groq_api_key") and os.getenv("GROQ_API_KEY"):
+        config["groq_api_key"] = os.getenv("GROQ_API_KEY")
+    if not config.get("gemini_api_key") and os.getenv("GEMINI_API_KEY"):
+        config["gemini_api_key"] = os.getenv("GEMINI_API_KEY")
+
+    if config.get("gemini_model") in ("gemini-flash-latest", "gemini-3.8-flash", "", None):
+        config["gemini_model"] = "gemini-flash-lite-latest"
+
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)

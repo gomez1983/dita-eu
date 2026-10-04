@@ -36,7 +36,7 @@ class GroqTranscriber:
         }
 
         try:
-            response = requests.post(url, headers=headers, files=files, data=data, timeout=5)
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=8)
             if response.status_code == 200:
                 result = response.json()
                 return result.get("text", "").strip()
@@ -84,7 +84,7 @@ class GroqTranscriber:
                         ],
                         "temperature": 0.2
                     },
-                    timeout=5
+                    timeout=6
                 )
                 if response.status_code == 200:
                     data = response.json()
@@ -99,7 +99,7 @@ class GroqTranscriber:
 
 
 class GeminiTranscriber:
-    """Motor multimodal via Google Gemini Flash Lite (com timeout seguro de 5s)"""
+    """Motor multimodal via Google Gemini Flash Lite (com timeout seguro de 12s)"""
     def __init__(self, api_key: str = None, model: str = "gemini-flash-lite-latest", language: str = "pt-BR"):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.model = model or "gemini-flash-lite-latest"
@@ -142,13 +142,13 @@ class GeminiTranscriber:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(_call)
-                return fut.result(timeout=6)
+                return fut.result(timeout=12)
         except Exception as e:
             print(f"[GeminiTranscriber] Erro ou timeout na chamada Gemini: {e}")
             return ""
 
     def translate_text(self, text: str, target_lang: str) -> str:
-        """Tradução de texto via Gemini com timeout de segurança de 5s"""
+        """Tradução de texto via Gemini com timeout de segurança de 8s"""
         if not text or not self.client:
             return ""
 
@@ -184,7 +184,7 @@ class GeminiTranscriber:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(_call)
-                return fut.result(timeout=5)
+                return fut.result(timeout=8)
         except Exception as e:
             print(f"[GeminiTranscriber Translation] Erro ou timeout na chamada Gemini: {e}")
             return ""
@@ -200,16 +200,19 @@ class TranscriptionEngine:
     def transcribe(self, audio_bytes: bytes, target_lang: str = "original") -> str:
         target_lang = (target_lang or "original").lower()
 
-        # 1. Transcrição do áudio em texto em ~250ms (Groq Whisper Turbo com fallback Gemini)
+        # 1. Transcrição do áudio em texto (prioriza motor selecionado)
         raw_text = ""
-        if self.engine_type == "groq" and self.groq_engine.api_key:
-            raw_text = self.groq_engine.transcribe(audio_bytes)
+        if self.engine_type == "groq":
+            if self.groq_engine.api_key:
+                raw_text = self.groq_engine.transcribe(audio_bytes)
             if not raw_text and self.gemini_engine.client:
                 print("[TranscriptionEngine] Groq sem resposta, tentando fallback no Gemini...")
                 raw_text = self.gemini_engine.transcribe(audio_bytes)
         else:
-            raw_text = self.gemini_engine.transcribe(audio_bytes)
+            if self.gemini_engine.client:
+                raw_text = self.gemini_engine.transcribe(audio_bytes)
             if not raw_text and self.groq_engine.api_key:
+                print("[TranscriptionEngine] Gemini sem resposta, tentando fallback no Groq...")
                 raw_text = self.groq_engine.transcribe(audio_bytes)
 
         if not raw_text:
@@ -219,15 +222,20 @@ class TranscriptionEngine:
         if target_lang in ("original", "none", ""):
             return raw_text
 
-        # 3. Modo Tradução Coloquial em Alta Velocidade (~250ms)
+        # 3. Modo Tradução Coloquial em Alta Velocidade (prioriza motor selecionado)
         translated = ""
-        if self.groq_engine.api_key:
-            translated = self.groq_engine.translate_text(raw_text, target_lang)
-
-        # Se Groq falhar ou não estiver configurada, tenta Gemini com timeout
-        if not translated and self.gemini_engine.client:
-            print("[TranscriptionEngine] Tentando tradução via Gemini Flash...")
-            translated = self.gemini_engine.translate_text(raw_text, target_lang)
+        if self.engine_type == "gemini":
+            if self.gemini_engine.client:
+                translated = self.gemini_engine.translate_text(raw_text, target_lang)
+            if not translated and self.groq_engine.api_key:
+                print("[TranscriptionEngine] Gemini translation falhou, tentando fallback no Groq...")
+                translated = self.groq_engine.translate_text(raw_text, target_lang)
+        else:
+            if self.groq_engine.api_key:
+                translated = self.groq_engine.translate_text(raw_text, target_lang)
+            if not translated and self.gemini_engine.client:
+                print("[TranscriptionEngine] Groq translation falhou, tentando fallback no Gemini...")
+                translated = self.gemini_engine.translate_text(raw_text, target_lang)
 
         # Se por qualquer motivo a tradução falhar, retorna a transcrição original (nunca perde o que foi falado)
         return translated if translated else raw_text
