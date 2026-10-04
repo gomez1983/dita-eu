@@ -33,13 +33,15 @@ class DictationApp(QtCore.QObject):
         self.q_app = q_app
 
         self.icon_ico_path = get_resource_path("icon.ico")
-        self.icon_png_path = get_resource_path("icon_white.png")
+        self.icon_white_path = get_resource_path("icon_white.png")
+        self.icon_dark_path = get_resource_path("icon.png")
 
         self.config = config_manager.load_config()
 
         self.hud = FloatingHUD(
             bottom_offset=self.config.get("hud_bottom_offset", 350),
-            theme=self.config.get("theme", "dark")
+            theme=self.config.get("theme", "dark"),
+            translation_target=self.config.get("translation_target", "original")
         )
 
         self.recorder = AudioRecorder(device_index=self.config.get("microphone_index"))
@@ -64,9 +66,15 @@ class DictationApp(QtCore.QObject):
         self.volume_timer.timeout.connect(self._check_volume)
         self.volume_timer.start()
 
-        self.settings_window = SettingsWindow(self.config, icon_path=self.icon_png_path)
+        self.settings_window = SettingsWindow(
+            self.config,
+            icon_path=self.icon_white_path,
+            icon_white_path=self.icon_white_path,
+            icon_dark_path=self.icon_dark_path
+        )
         self.settings_window.config_saved.connect(self._on_config_updated)
 
+        self.tray_lang_actions = {}
         self._setup_tray_icon()
 
         self.keyboard_listener = None
@@ -75,11 +83,10 @@ class DictationApp(QtCore.QObject):
         QtCore.QTimer.singleShot(200, self.show_settings)
 
     def _setup_tray_icon(self):
-        icon = QtGui.QIcon(self.icon_ico_path if os.path.exists(self.icon_ico_path) else self.icon_png_path)
+        icon = QtGui.QIcon(self.icon_ico_path if os.path.exists(self.icon_ico_path) else self.icon_white_path)
         self.tray_icon = QtWidgets.QSystemTrayIcon(icon, self.q_app)
         
-        keys_str = " + ".join([k.upper() for k in self.config.get("trigger_keys", ["F8"])])
-        self.tray_icon.setToolTip(f"Dita-eu — Push-to-Talk ({keys_str})")
+        self._update_tray_tooltip()
 
         tray_menu = QtWidgets.QMenu()
         tray_menu.setStyleSheet("""
@@ -96,12 +103,42 @@ class DictationApp(QtCore.QObject):
             QMenu::item:selected {
                 background-color: #27272a;
             }
+            QMenu::item:checked {
+                color: #60a5fa;
+                font-weight: bold;
+            }
         """)
 
         title_action = tray_menu.addAction("Dita-eu")
         title_action.setEnabled(False)
         tray_menu.addSeparator()
 
+        # Submenu de Tradução Rápida
+        trans_menu = tray_menu.addMenu("🌐 Modo Tradução")
+        self.tray_lang_group = QtWidgets.QActionGroup(self)
+        self.tray_lang_group.setExclusive(True)
+
+        lang_options = [
+            ("original", "Transcrição Original"),
+            ("en", "🇺🇸 Inglês (EN)"),
+            ("es", "🇪🇸 Espanhol (ES)"),
+            ("fr", "🇫🇷 Francês (FR)"),
+            ("de", "🇩🇪 Alemão (DE)"),
+            ("it", "🇮🇹 Italiano (IT)")
+        ]
+
+        current_target = self.config.get("translation_target", "original")
+        for code, label in lang_options:
+            act = QtWidgets.QAction(label, self)
+            act.setCheckable(True)
+            if code == current_target:
+                act.setChecked(True)
+            act.triggered.connect(lambda checked, c=code: self._set_translation_language(c))
+            self.tray_lang_group.addAction(act)
+            trans_menu.addAction(act)
+            self.tray_lang_actions[code] = act
+
+        tray_menu.addSeparator()
         settings_action = tray_menu.addAction("Configurações...")
         settings_action.triggered.connect(self.show_settings)
 
@@ -112,6 +149,24 @@ class DictationApp(QtCore.QObject):
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+    def _update_tray_tooltip(self):
+        keys_str = " + ".join([k.upper() for k in self.config.get("trigger_keys", ["F8"])])
+        target = self.config.get("translation_target", "original")
+        trans_tag = f" | 🌐 {target.upper()}" if target != "original" else ""
+        self.tray_icon.setToolTip(f"Dita-eu — Push-to-Talk ({keys_str}){trans_tag}")
+
+    def _set_translation_language(self, lang_code: str):
+        self.config["translation_target"] = lang_code
+        config_manager.save_config(self.config)
+        self.hud.set_translation_target(lang_code)
+        self.settings_window.set_translation_target(lang_code)
+
+        if lang_code in self.tray_lang_actions:
+            self.tray_lang_actions[lang_code].setChecked(True)
+
+        self._update_tray_tooltip()
+        print(f"[Dita-eu] Modo Tradução alterado via bandeja: {lang_code}")
 
     def _on_tray_activated(self, reason):
         if reason in (QtWidgets.QSystemTrayIcon.ActivationReason.DoubleClick, QtWidgets.QSystemTrayIcon.ActivationReason.Trigger):
@@ -126,6 +181,12 @@ class DictationApp(QtCore.QObject):
         self.config = new_config
         self.hud.bottom_offset = self.config.get("hud_bottom_offset", 350)
         self.hud.set_theme(self.config.get("theme", "dark"))
+        
+        target_lang = self.config.get("translation_target", "original")
+        self.hud.set_translation_target(target_lang)
+        if target_lang in self.tray_lang_actions:
+            self.tray_lang_actions[target_lang].setChecked(True)
+
         self.recorder.device_index = self.config.get("microphone_index")
         
         self.engine = TranscriptionEngine(
@@ -135,9 +196,9 @@ class DictationApp(QtCore.QObject):
             gemini_model=self.config.get("gemini_model", "gemini-flash-latest")
         )
 
+        self._update_tray_tooltip()
         keys_str = " + ".join([k.upper() for k in self.config.get("trigger_keys", ["F8"])])
-        self.tray_icon.setToolTip(f"Dita-eu — Push-to-Talk ({keys_str})")
-        print(f"[Dita-eu] Configuração aplicada: Atalho [{keys_str}], Motor [{self.config.get('engine')}], Tema [{self.config.get('theme')}]")
+        print(f"[Dita-eu] Configuração aplicada: Atalho [{keys_str}], Motor [{self.config.get('engine')}], Tema [{self.config.get('theme')}], Tradução [{target_lang}]")
 
     def _check_volume(self):
         if self._is_active and self.recorder.is_recording:
@@ -193,7 +254,8 @@ class DictationApp(QtCore.QObject):
                 return
             self._is_active = True
 
-        print(f"[Dita-eu] Gravando... (Motor: {self.config.get('engine')})")
+        target_lang = self.config.get("translation_target", "original")
+        print(f"[Dita-eu] Gravando... (Motor: {self.config.get('engine')}, Tradução: {target_lang})")
         self.sig_show_recording.emit()
         self.recorder.start()
 
@@ -214,9 +276,10 @@ class DictationApp(QtCore.QObject):
                 print("[Dita-eu] Áudio muito curto ou inaudível.")
                 return
 
-            text = self.engine.transcribe(audio_bytes)
+            target_lang = self.config.get("translation_target", "original")
+            text = self.engine.transcribe(audio_bytes, target_lang=target_lang)
             if text:
-                print(f"[Dita-eu] Texto transcrito: '{text}'")
+                print(f"[Dita-eu] Texto transcrito ({target_lang}): '{text}'")
                 inject_text(text, restore_clipboard=True)
             else:
                 print("[Dita-eu] Nenhuma fala identificada.")

@@ -8,10 +8,11 @@ WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TOPMOST = 0x00000008
 
 class FloatingHUD(QtWidgets.QWidget):
-    def __init__(self, bottom_offset: int = 350, theme: str = "dark"):
+    def __init__(self, bottom_offset: int = 350, theme: str = "dark", translation_target: str = "original"):
         super().__init__()
         self.bottom_offset = bottom_offset
         self.theme = theme
+        self.translation_target = (translation_target or "original").lower()
         self.current_state = "idle"
         self.volume_level = 0.0
 
@@ -23,36 +24,68 @@ class FloatingHUD(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
 
-        self.setFixedSize(220, 52)
         self._setup_ui()
         self._apply_win32_noactivate()
+        self.set_translation_target(self.translation_target)
         self.set_theme(self.theme)
 
     def _setup_ui(self):
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(18, 8, 18, 8)
-        layout.setSpacing(12)
+        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setSpacing(10)
 
         self.dot = QtWidgets.QLabel()
         self.dot.setFixedSize(14, 14)
         self.dot.setStyleSheet("border-radius: 7px; background-color: #ef4444;")
 
+        self.lang_badge = QtWidgets.QLabel()
+        self.lang_badge.setObjectName("LangBadge")
+        self.lang_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.lang_badge.hide()
+
         self.label = QtWidgets.QLabel("Ouvindo...")
+        
         layout.addWidget(self.dot)
+        layout.addWidget(self.lang_badge)
         layout.addWidget(self.label)
         layout.addStretch()
 
+    def set_translation_target(self, target: str):
+        self.translation_target = (target or "original").lower()
+        if self.translation_target not in ("original", "none", ""):
+            code = self.translation_target.upper()
+            self.lang_badge.setText(f"🌐 {code}")
+            self.lang_badge.show()
+            self.setFixedSize(260, 52)
+        else:
+            self.lang_badge.hide()
+            self.setFixedSize(220, 52)
+        self._apply_theme_styles()
+
     def set_theme(self, theme: str):
         self.theme = theme
+        self._apply_theme_styles()
+        self.update()
+
+    def _apply_theme_styles(self):
         if self.theme == "light":
             self.label.setStyleSheet(
                 "color: #0f172a; font-family: 'Segoe UI', -apple-system, sans-serif; font-size: 14px; font-weight: 700;"
+            )
+            self.lang_badge.setStyleSheet(
+                "background-color: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; "
+                "border-radius: 5px; padding: 2px 7px; font-size: 11px; font-weight: 700; "
+                "font-family: 'Segoe UI', sans-serif;"
             )
         else:
             self.label.setStyleSheet(
                 "color: #f3f4f6; font-family: 'Segoe UI', -apple-system, sans-serif; font-size: 14px; font-weight: 600;"
             )
-        self.update()
+            self.lang_badge.setStyleSheet(
+                "background-color: #27272a; color: #93c5fd; border: 1px solid #3b82f6; "
+                "border-radius: 5px; padding: 2px 7px; font-size: 11px; font-weight: 700; "
+                "font-family: 'Segoe UI', sans-serif;"
+            )
 
     def _apply_win32_noactivate(self):
         hwnd = int(self.winId())
@@ -100,7 +133,8 @@ class FloatingHUD(QtWidgets.QWidget):
 
     def set_processing(self):
         self.current_state = "processing"
-        self.label.setText("Digitando...")
+        is_translating = self.translation_target not in ("original", "none", "")
+        self.label.setText("Traduzindo..." if is_translating else "Digitando...")
         self.dot.setFixedSize(14, 14)
         dot_color = "#2563eb" if self.theme == "light" else "#3b82f6"
         self.dot.setStyleSheet(f"border-radius: 7px; background-color: {dot_color};")

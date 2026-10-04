@@ -6,6 +6,70 @@ from pynput import keyboard
 
 import config_manager
 
+class ToggleSwitch(QtWidgets.QAbstractButton):
+    """Toggle switch moderno e minimalista estilo iOS / Windows 11 Settings"""
+    def __init__(self, parent=None, checked=False, theme: str = "dark"):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setChecked(checked)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(46, 24)
+        self.theme = theme
+
+        self._offset = 1.0 if checked else 0.0
+        self._anim = QtCore.QPropertyAnimation(self, b"offset", self)
+        self._anim.setDuration(120)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+        self.toggled.connect(self._start_anim)
+
+    def _get_offset(self):
+        return self._offset
+
+    def _set_offset(self, val):
+        self._offset = val
+        self.update()
+
+    offset = QtCore.pyqtProperty(float, _get_offset, _set_offset)
+
+    def _start_anim(self, checked):
+        self._anim.stop()
+        self._anim.setStartValue(self._offset)
+        self._anim.setEndValue(1.0 if checked else 0.0)
+        self._anim.start()
+
+    def set_theme(self, theme: str):
+        self.theme = theme
+        self.update()
+
+    def hitButton(self, pos: QtCore.QPoint):
+        return self.rect().contains(pos)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+
+        # Trilha arredondada
+        if self._offset > 0.0:
+            track_color = QtGui.QColor("#2563eb")  # Azul vibrante de ativação
+        else:
+            track_color = QtGui.QColor("#3f3f46") if self.theme == "dark" else QtGui.QColor("#cbd5e1")
+
+        painter.setBrush(QtGui.QBrush(track_color))
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(0, 0, 46, 24, 12, 12)
+
+        # Círculo deslizante (Thumb)
+        thumb_diameter = 18
+        x = 3 + self._offset * (46 - thumb_diameter - 6)
+        y = 3
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("#ffffff")))
+        if self._offset == 0.0 and self.theme == "light":
+            painter.setPen(QtGui.QPen(QtGui.QColor("#94a3b8"), 1))
+        else:
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.drawEllipse(QtCore.QRectF(x, y, thumb_diameter, thumb_diameter))
+
+
 class KeyRecorderDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, theme: str = "dark"):
         super().__init__(parent)
@@ -214,26 +278,46 @@ class KeyRecorderDialog(QtWidgets.QDialog):
 class SettingsWindow(QtWidgets.QWidget):
     config_saved = QtCore.pyqtSignal(dict)
 
-    def __init__(self, config: dict, icon_path: str = None):
+    def __init__(self, config: dict, icon_path: str = None, icon_white_path: str = None, icon_dark_path: str = None):
         super().__init__()
         self.config = config.copy()
-        self.icon_path = icon_path
+        self.icon_white_path = icon_white_path or icon_path
+        self.icon_dark_path = icon_dark_path or icon_path
         self.current_theme = self.config.get("theme", "dark")
 
         self.setWindowTitle("Dita-eu — Configurações")
         self.setMinimumSize(520, 620)
-        self.resize(550, 700)
+        self.resize(550, 710)
 
-        if icon_path and os.path.exists(icon_path):
-            self.setWindowIcon(QtGui.QIcon(icon_path))
-
-        self._apply_theme(self.current_theme)
         self._setup_ui()
+        self._apply_theme(self.current_theme)
+
+    def _update_logo(self):
+        icon_file = self.icon_white_path if self.current_theme == "dark" else self.icon_dark_path
+        if icon_file and os.path.exists(icon_file):
+            pix = QtGui.QPixmap(icon_file).scaled(
+                34, 34,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation
+            )
+            self.logo_label.setPixmap(pix)
+            self.setWindowIcon(QtGui.QIcon(icon_file))
 
     def _apply_theme(self, theme: str):
         self.current_theme = theme
+        self._update_logo()
+
+        if hasattr(self, "theme_switch"):
+            self.theme_switch.set_theme(theme)
+            self.theme_switch.blockSignals(True)
+            self.theme_switch.setChecked(theme == "dark")
+            self.theme_switch.blockSignals(False)
+            self.theme_label.setText("🌙 Modo Escuro" if theme == "dark" else "☀️ Modo Claro")
+
+        if hasattr(self, "autostart_switch"):
+            self.autostart_switch.set_theme(theme)
+
         if theme == "light":
-            # Modo Claro com critérios rígidos de contraste (WCAG AAA / AA)
             self.setStyleSheet("""
                 QWidget {
                     background-color: #f8fafc;
@@ -326,23 +410,6 @@ class SettingsWindow(QtWidgets.QWidget):
                     border: 1px solid #cbd5e1;
                     outline: none;
                 }
-                QCheckBox {
-                    font-size: 13px;
-                    color: #1e293b;
-                    font-weight: 500;
-                    spacing: 8px;
-                }
-                QCheckBox::indicator {
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 4px;
-                    border: 1px solid #94a3b8;
-                    background-color: #ffffff;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #0f172a;
-                    border: 1px solid #0f172a;
-                }
                 QPushButton {
                     background-color: #0f172a;
                     color: #ffffff;
@@ -368,7 +435,6 @@ class SettingsWindow(QtWidgets.QWidget):
                 }
             """)
         else:
-            # Modo Escuro com contraste rigoroso (Preto/Zinco profundo + Branco)
             self.setStyleSheet("""
                 QWidget {
                     background-color: #09090b;
@@ -460,22 +526,6 @@ class SettingsWindow(QtWidgets.QWidget):
                     border: 1px solid #3f3f46;
                     outline: none;
                 }
-                QCheckBox {
-                    font-size: 13px;
-                    color: #e4e4e7;
-                    spacing: 8px;
-                }
-                QCheckBox::indicator {
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 4px;
-                    border: 1px solid #3f3f46;
-                    background-color: #18181b;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #ffffff;
-                    border: 1px solid #ffffff;
-                }
                 QPushButton {
                     background-color: #ffffff;
                     color: #09090b;
@@ -514,13 +564,10 @@ class SettingsWindow(QtWidgets.QWidget):
         main_layout.setContentsMargins(32, 24, 32, 24)
         main_layout.setSpacing(18)
 
-        # Cabeçalho
+        # Cabeçalho com Logo Dinâmico e Toggle de Tema
         header_layout = QtWidgets.QHBoxLayout()
-        if self.icon_path and os.path.exists(self.icon_path):
-            icon_lbl = QtWidgets.QLabel()
-            pix = QtGui.QPixmap(self.icon_path).scaled(34, 34, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
-            icon_lbl.setPixmap(pix)
-            header_layout.addWidget(icon_lbl)
+        self.logo_label = QtWidgets.QLabel()
+        header_layout.addWidget(self.logo_label)
 
         title_lbl = QtWidgets.QLabel("Dita-eu")
         title_lbl.setObjectName("TitleLabel")
@@ -535,18 +582,19 @@ class SettingsWindow(QtWidgets.QWidget):
         header_layout.addLayout(title_vbox)
         header_layout.addStretch()
 
-        # Seletor de Tema no cabeçalho
-        theme_vbox = QtWidgets.QVBoxLayout()
-        theme_vbox.setSpacing(4)
-        theme_lbl = QtWidgets.QLabel("Tema:")
-        self.theme_combo = QtWidgets.QComboBox()
-        self.theme_combo.addItem("🌙 Modo Escuro", "dark")
-        self.theme_combo.addItem("☀️ Modo Claro", "light")
-        self.theme_combo.setCurrentIndex(0 if self.current_theme == "dark" else 1)
-        self.theme_combo.setMinimumWidth(130)
-        theme_vbox.addWidget(theme_lbl)
-        theme_vbox.addWidget(self.theme_combo)
-        header_layout.addLayout(theme_vbox)
+        # Toggle Switch direto para Alternância de Tema
+        theme_container = QtWidgets.QWidget()
+        theme_layout = QtWidgets.QHBoxLayout(theme_container)
+        theme_layout.setContentsMargins(0, 0, 0, 0)
+        theme_layout.setSpacing(10)
+
+        self.theme_label = QtWidgets.QLabel("🌙 Modo Escuro" if self.current_theme == "dark" else "☀️ Modo Claro")
+        self.theme_switch = ToggleSwitch(checked=(self.current_theme == "dark"), theme=self.current_theme)
+        self.theme_switch.toggled.connect(self._on_theme_switch_toggled)
+
+        theme_layout.addWidget(self.theme_label)
+        theme_layout.addWidget(self.theme_switch)
+        header_layout.addWidget(theme_container)
 
         main_layout.addLayout(header_layout)
 
@@ -571,33 +619,37 @@ class SettingsWindow(QtWidgets.QWidget):
         engine_layout.addWidget(self.engine_combo)
         main_layout.addLayout(engine_layout)
 
-        # 2. Chave Groq
-        self.groq_box = QtWidgets.QWidget()
-        groq_vbox = QtWidgets.QVBoxLayout(self.groq_box)
-        groq_vbox.setContentsMargins(0, 0, 0, 0)
-        groq_vbox.setSpacing(6)
-        groq_lbl = QtWidgets.QLabel("Chave de API da Groq (GROQ_API_KEY):")
-        self.groq_input = QtWidgets.QLineEdit(self.config.get("groq_api_key", ""))
-        self.groq_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.groq_input.setPlaceholderText("gsk_...")
-        groq_vbox.addWidget(groq_lbl)
-        groq_vbox.addWidget(self.groq_input)
-        main_layout.addWidget(self.groq_box)
+        # 2. Modo Tradução (Alta Fidelidade e Coloquialidade Humana)
+        trans_layout = QtWidgets.QVBoxLayout()
+        trans_layout.setSpacing(6)
+        trans_lbl = QtWidgets.QLabel("Modo Tradução (Tempo Real):")
+        self.trans_combo = QtWidgets.QComboBox()
+        self.trans_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.trans_combo.addItem("Original (Sem tradução / Transcrição direta)", "original")
+        self.trans_combo.addItem("🇺🇸 Inglês (English)", "en")
+        self.trans_combo.addItem("🇪🇸 Espanhol (Español)", "es")
+        self.trans_combo.addItem("🇫🇷 Francês (Français)", "fr")
+        self.trans_combo.addItem("🇩🇪 Alemão (Deutsch)", "de")
+        self.trans_combo.addItem("🇮🇹 Italiano (Italiano)", "it")
 
-        # 3. Chave Gemini
-        self.gemini_box = QtWidgets.QWidget()
-        gemini_vbox = QtWidgets.QVBoxLayout(self.gemini_box)
-        gemini_vbox.setContentsMargins(0, 0, 0, 0)
-        gemini_vbox.setSpacing(6)
-        gemini_lbl = QtWidgets.QLabel("Chave de API do Google Gemini (GEMINI_API_KEY):")
-        self.gemini_input = QtWidgets.QLineEdit(self.config.get("gemini_api_key", ""))
-        self.gemini_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.gemini_input.setPlaceholderText("Cole sua chave Gemini...")
-        gemini_vbox.addWidget(gemini_lbl)
-        gemini_vbox.addWidget(self.gemini_input)
-        main_layout.addWidget(self.gemini_box)
+        current_trans = self.config.get("translation_target", "original")
+        for i in range(self.trans_combo.count()):
+            if self.trans_combo.itemData(i) == current_trans:
+                self.trans_combo.setCurrentIndex(i)
+                break
 
-        # 4. Modo de Funcionamento (EXCLUSIVAMENTE a Opção 1 mantida no Front-end)
+        trans_hint = QtWidgets.QLabel(
+            "Sua fala será automaticamente traduzida para o idioma selecionado com tom estritamente natural e coloquial de um falante nativo."
+        )
+        trans_hint.setObjectName("HintLabel")
+        trans_hint.setWordWrap(True)
+
+        trans_layout.addWidget(trans_lbl)
+        trans_layout.addWidget(self.trans_combo)
+        trans_layout.addWidget(trans_hint)
+        main_layout.addLayout(trans_layout)
+
+        # 3. Modo de Funcionamento (Opção 1 Única e Padrão)
         mode_card = QtWidgets.QWidget()
         mode_card.setObjectName("CardBox")
         mode_card_layout = QtWidgets.QVBoxLayout(mode_card)
@@ -621,7 +673,7 @@ class SettingsWindow(QtWidgets.QWidget):
         mode_card_layout.addWidget(mode_desc)
         main_layout.addWidget(mode_card)
 
-        # 5. Tecla de Atalho Push-to-Talk
+        # 4. Tecla de Atalho Push-to-Talk
         shortcut_layout = QtWidgets.QVBoxLayout()
         shortcut_layout.setSpacing(6)
         shortcut_lbl = QtWidgets.QLabel("Atalho Push-to-Talk (Manter pressionado para falar):")
@@ -640,7 +692,7 @@ class SettingsWindow(QtWidgets.QWidget):
         shortcut_row.addWidget(self.shortcut_input)
         shortcut_row.addWidget(self.btn_record_key)
 
-        shortcut_hint = QtWidgets.QLabel("Segure a tecla configurada para falar. Ao soltar, a transcrição é colada onde seu cursor estiver.")
+        shortcut_hint = QtWidgets.QLabel("Segure a tecla configurada para falar. Ao soltar, o texto é colado onde seu cursor estiver.")
         shortcut_hint.setObjectName("HintLabel")
         shortcut_hint.setWordWrap(True)
 
@@ -649,7 +701,7 @@ class SettingsWindow(QtWidgets.QWidget):
         shortcut_layout.addWidget(shortcut_hint)
         main_layout.addLayout(shortcut_layout)
 
-        # 6. Microfone de Entrada
+        # 5. Microfone de Entrada
         mic_layout = QtWidgets.QVBoxLayout()
         mic_layout.setSpacing(6)
         mic_lbl = QtWidgets.QLabel("Microfone de Entrada:")
@@ -660,7 +712,7 @@ class SettingsWindow(QtWidgets.QWidget):
         mic_layout.addWidget(self.mic_combo)
         main_layout.addLayout(mic_layout)
 
-        # 7. Altura da Pílula HUD na tela
+        # 6. Altura da Pílula HUD na tela
         hud_layout = QtWidgets.QHBoxLayout()
         hud_lbl = QtWidgets.QLabel("Distância da base da tela (Pílula em pixels):")
         self.hud_spin = QtWidgets.QSpinBox()
@@ -673,10 +725,31 @@ class SettingsWindow(QtWidgets.QWidget):
         hud_layout.addWidget(self.hud_spin)
         main_layout.addLayout(hud_layout)
 
-        # 8. Iniciar com o Windows
-        self.autostart_chk = QtWidgets.QCheckBox("Iniciar com o Windows (ao ligar o computador)")
-        self.autostart_chk.setChecked(self.config.get("autostart", False))
-        main_layout.addWidget(self.autostart_chk)
+        # 7. Iniciar com o Windows (Toggle Switch moderno estilo Windows 11)
+        autostart_card = QtWidgets.QWidget()
+        autostart_card.setObjectName("CardBox")
+        autostart_layout = QtWidgets.QHBoxLayout(autostart_card)
+        autostart_layout.setContentsMargins(14, 12, 14, 12)
+        autostart_layout.setSpacing(12)
+
+        autostart_text_vbox = QtWidgets.QVBoxLayout()
+        autostart_text_vbox.setSpacing(2)
+        autostart_title = QtWidgets.QLabel("Iniciar com o Windows")
+        autostart_title.setObjectName("CardTitle")
+        autostart_desc = QtWidgets.QLabel("Executar o aplicativo automaticamente em segundo plano ao ligar o computador")
+        autostart_desc.setObjectName("HintLabel")
+        autostart_text_vbox.addWidget(autostart_title)
+        autostart_text_vbox.addWidget(autostart_desc)
+
+        self.autostart_switch = ToggleSwitch(
+            checked=self.config.get("autostart", False),
+            theme=self.current_theme
+        )
+
+        autostart_layout.addLayout(autostart_text_vbox)
+        autostart_layout.addStretch()
+        autostart_layout.addWidget(self.autostart_switch)
+        main_layout.addWidget(autostart_card)
 
         main_layout.addSpacing(6)
 
@@ -686,34 +759,32 @@ class SettingsWindow(QtWidgets.QWidget):
         self.btn_save.clicked.connect(self._manual_save_clicked)
         main_layout.addWidget(self.btn_save)
 
-        self._toggle_engine_fields()
-
-        # Conexão de sinais APÓS os campos estarem todos montados
-        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        # Conexão de sinais
         self.engine_combo.currentIndexChanged.connect(self._on_field_changed)
-        self.groq_input.textChanged.connect(self._on_field_changed)
-        self.gemini_input.textChanged.connect(self._on_field_changed)
+        self.trans_combo.currentIndexChanged.connect(self._on_field_changed)
         self.mic_combo.currentIndexChanged.connect(self._on_field_changed)
         self.hud_spin.valueChanged.connect(self._on_field_changed)
-        self.autostart_chk.toggled.connect(self._on_field_changed)
+        self.autostart_switch.toggled.connect(self._on_field_changed)
 
         scroll_area.setWidget(content_widget)
         root_layout.addWidget(scroll_area)
 
-    def _on_theme_changed(self):
-        new_theme = self.theme_combo.currentData()
+    def _on_theme_switch_toggled(self, is_dark: bool):
+        new_theme = "dark" if is_dark else "light"
         self.config["theme"] = new_theme
         self._apply_theme(new_theme)
         self._save_settings(feedback=False)
 
-    def _toggle_engine_fields(self):
-        engine = self.engine_combo.currentData()
-        if engine == "groq":
-            self.groq_box.show()
-            self.gemini_box.hide()
-        else:
-            self.groq_box.hide()
-            self.gemini_box.show()
+    def set_translation_target(self, target: str):
+        """Atualiza o combobox caso o usuário tenha alterado o idioma pelo menu da bandeja (tray)"""
+        target = (target or "original").lower()
+        self.trans_combo.blockSignals(True)
+        for i in range(self.trans_combo.count()):
+            if self.trans_combo.itemData(i) == target:
+                self.trans_combo.setCurrentIndex(i)
+                break
+        self.trans_combo.blockSignals(False)
+        self.config["translation_target"] = target
 
     def _populate_microphones(self):
         self.mic_combo.blockSignals(True)
@@ -746,20 +817,18 @@ class SettingsWindow(QtWidgets.QWidget):
                 self._save_settings(feedback=False)
 
     def _on_field_changed(self):
-        self._toggle_engine_fields()
         self._save_settings(feedback=False)
 
     def _manual_save_clicked(self):
         self._save_settings(feedback=True)
 
     def _save_settings(self, feedback: bool = False):
-        self.config["theme"] = self.theme_combo.currentData()
+        self.config["theme"] = "dark" if self.theme_switch.isChecked() else "light"
         self.config["engine"] = self.engine_combo.currentData()
-        self.config["groq_api_key"] = self.groq_input.text().strip()
-        self.config["gemini_api_key"] = self.gemini_input.text().strip()
+        self.config["translation_target"] = self.trans_combo.currentData()
         self.config["microphone_index"] = self.mic_combo.currentData()
         self.config["hud_bottom_offset"] = self.hud_spin.value()
-        self.config["autostart"] = self.autostart_chk.isChecked()
+        self.config["autostart"] = self.autostart_switch.isChecked()
 
         config_manager.save_config(self.config)
         config_manager.set_windows_autostart(self.config["autostart"])

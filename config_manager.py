@@ -14,7 +14,8 @@ DEFAULT_CONFIG = {
     "microphone_index": None,
     "hud_bottom_offset": 350,
     "theme": "dark",
-    "autostart": False
+    "autostart": False,
+    "translation_target": "original"  # "original", "en", "es", "fr", "de", "it"
 }
 
 def load_config() -> dict:
@@ -28,6 +29,13 @@ def load_config() -> dict:
             print(f"[Config] Erro ao ler config.json: {e}")
     else:
         save_config(config)
+
+    # Garante que chaves de API sejam carregadas do .env caso não estejam no config.json
+    if not config.get("groq_api_key"):
+        config["groq_api_key"] = os.getenv("GROQ_API_KEY", "")
+    if not config.get("gemini_api_key"):
+        config["gemini_api_key"] = os.getenv("GEMINI_API_KEY", "")
+
     return config
 
 def save_config(config: dict):
