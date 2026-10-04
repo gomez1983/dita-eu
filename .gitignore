@@ -1,0 +1,32 @@
+# Arquivos de ambiente e segredos
+.env
+*.env
+config.json
+
+# Logs e arquivos de depuração
+*.log
+crash.log
+*err.txt
+*out.txt
+
+# Python / Ambientes virtuais
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# PyInstaller / Build
+build/
+dist/
+*.spec
+
+# IDEs e Editores
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
