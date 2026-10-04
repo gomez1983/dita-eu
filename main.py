@@ -49,7 +49,7 @@ class DictationApp(QtCore.QObject):
             engine_type=self.config.get("engine", "groq"),
             groq_api_key=self.config.get("groq_api_key", ""),
             gemini_api_key=self.config.get("gemini_api_key", ""),
-            gemini_model=self.config.get("gemini_model", "gemini-flash-latest")
+            gemini_model=self.config.get("gemini_model", "gemini-flash-lite-latest")
         )
 
         self.sig_show_recording.connect(self.hud.set_recording)
@@ -60,6 +60,10 @@ class DictationApp(QtCore.QObject):
         self._is_active = False
         self._lock = threading.Lock()
         self._currently_pressed_keys = set()
+
+        self.hud_safety_timer = QtCore.QTimer()
+        self.hud_safety_timer.setSingleShot(True)
+        self.hud_safety_timer.timeout.connect(self._on_hud_timeout)
 
         self.volume_timer = QtCore.QTimer()
         self.volume_timer.setInterval(50)
@@ -193,7 +197,7 @@ class DictationApp(QtCore.QObject):
             engine_type=self.config.get("engine", "groq"),
             groq_api_key=self.config.get("groq_api_key", ""),
             gemini_api_key=self.config.get("gemini_api_key", ""),
-            gemini_model=self.config.get("gemini_model", "gemini-flash-latest")
+            gemini_model=self.config.get("gemini_model", "gemini-flash-lite-latest")
         )
 
         self._update_tray_tooltip()
@@ -267,7 +271,12 @@ class DictationApp(QtCore.QObject):
 
         print("[Dita-eu] Finalizado. Transcrevendo...")
         self.sig_show_processing.emit()
+        QtCore.QMetaObject.invokeMethod(self.hud_safety_timer, "start", QtCore.Qt.ConnectionType.QueuedConnection, QtCore.Q_ARG(int, 7000))
         threading.Thread(target=self._process_and_inject, daemon=True).start()
+
+    def _on_hud_timeout(self):
+        print("[Dita-eu] Watchdog: Processamento excedeu tempo limite. Ocultando HUD por segurança.")
+        self.sig_hide_hud.emit()
 
     def _process_and_inject(self):
         try:
@@ -286,6 +295,7 @@ class DictationApp(QtCore.QObject):
         except Exception as e:
             print(f"[Dita-eu] Erro na transcrição ou injeção: {e}")
         finally:
+            QtCore.QMetaObject.invokeMethod(self.hud_safety_timer, "stop", QtCore.Qt.ConnectionType.QueuedConnection)
             self.sig_hide_hud.emit()
 
     def _quit_app(self):

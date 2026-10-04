@@ -1,6 +1,7 @@
 import io
 import os
 import requests
+import concurrent.futures
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -8,7 +9,7 @@ from google import genai
 from google.genai import types
 
 class GroqTranscriber:
-    """Motor ultra-rápido via Groq Whisper (~250-350ms de latência)"""
+    """Motor ultra-rápido via Groq Whisper (~250ms) + Groq LLMs (~250ms para tradução)"""
     def __init__(self, api_key: str = None, model: str = "whisper-large-v3-turbo", language: str = "pt"):
         self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
         self.model = model
@@ -35,7 +36,7 @@ class GroqTranscriber:
         }
 
         try:
-            response = requests.post(url, headers=headers, files=files, data=data, timeout=8)
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=5)
             if response.status_code == 200:
                 result = response.json()
                 return result.get("text", "").strip()
@@ -46,44 +47,62 @@ class GroqTranscriber:
             print(f"[GroqTranscriber] Erro na requisição: {e}")
             return ""
 
-    def translate_to_english(self, audio_bytes: bytes) -> str:
-        """Tradução direta de áudio para Inglês via Groq Whisper (~300ms)"""
-        if not audio_bytes or not self.api_key:
+    def translate_text(self, text: str, target_lang: str) -> str:
+        """Tradução ultra-rápida (~250ms) e altamente coloquial via LLMs da Groq"""
+        if not text or not self.api_key:
             return ""
 
-        url = "https://api.groq.com/openai/v1/audio/translations"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}"
+        lang_targets = {
+            "en": "casual, everyday conversational English as used by native speakers in daily chats",
+            "es": "casual, everyday colloquial Spanish as used by native speakers in daily chats",
+            "fr": "casual, everyday colloquial French as used by native speakers in daily chats",
+            "de": "casual, everyday colloquial German as used by native speakers in daily chats",
+            "it": "casual, everyday colloquial Italian as used by native speakers in daily chats"
         }
-        files = {
-            "file": ("audio.wav", io.BytesIO(audio_bytes), "audio/wav")
-        }
-        # Nota: Groq requer modelo whisper-large-v3 para endpoint /translations
-        data = {
-            "model": "whisper-large-v3",
-            "response_format": "json",
-            "temperature": "0.0",
-            "prompt": "Translate into natural, conversational, everyday spoken English as used by native speakers in daily chats. Keep natural colloquial phrasing, contractions, and authentic tone without being overly formal or robotic."
-        }
+        target_desc = lang_targets.get(target_lang.lower(), target_lang)
 
-        try:
-            response = requests.post(url, headers=headers, files=files, data=data, timeout=8)
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("text", "").strip()
-            else:
-                print(f"[GroqTranscriber Translation] Erro {response.status_code}: {response.text}")
-                return ""
-        except Exception as e:
-            print(f"[GroqTranscriber Translation] Erro na requisição: {e}")
-            return ""
+        system_instruction = (
+            f"You are a native conversational translator. Your task is to translate the spoken user text directly into {target_desc}.\n\n"
+            "Strict Rules:\n"
+            "1. Tone: Keep it strictly natural, casual, and colloquial—exactly how a native speaker would naturally speak or text a friend or coworker.\n"
+            "2. Avoid: Do NOT use formal, robotic, textbook, or overly sophisticated words.\n"
+            "3. Punctuation: Keep natural conversational rhythm and contractions (e.g. 'how's it going', 'gonna', 'let's').\n"
+            "4. Output: Return EXCLUSIVELY the translated text. Do NOT add quotation marks, explanations, notes, or intro text."
+        )
+
+        models_to_try = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+        for model in models_to_try:
+            try:
+                response = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_instruction},
+                            {"role": "user", "content": text}
+                        ],
+                        "temperature": 0.2
+                    },
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        return choices[0].get("message", {}).get("content", "").strip()
+            except Exception as e:
+                print(f"[GroqTranscriber Translation {model}] Erro: {e}")
+                continue
+
+        return ""
 
 
 class GeminiTranscriber:
-    """Motor multimodal via Google Gemini Flash"""
-    def __init__(self, api_key: str = None, model: str = "gemini-flash-latest", language: str = "pt-BR"):
+    """Motor multimodal via Google Gemini Flash Lite (com timeout seguro de 5s)"""
+    def __init__(self, api_key: str = None, model: str = "gemini-flash-lite-latest", language: str = "pt-BR"):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+        self.model = model or "gemini-flash-lite-latest"
         self.language = language or os.getenv("LANGUAGE", "pt-BR")
         self.client = None
 
@@ -98,24 +117,18 @@ class GeminiTranscriber:
             return ""
 
         system_instruction = (
-            "Você é um transcritor de voz para texto de altíssima precisão e inteligência, idêntico ao assistente de ditado do Antigravity.\n"
-            "Sua tarefa é transcrever o áudio fornecido diretamente para o texto final digitado pelo usuário.\n\n"
+            "Você é um transcritor de voz para texto de altíssima precisão.\n"
             "Diretrizes:\n"
-            "1. Transcreva o que o usuário disse no idioma detectado (prioritariamente Português do Brasil).\n"
-            "2. Pontuação expressiva: Adicione pontuação precisa (, . ? ! ; :) respeitando rigorosamente a entonação, pausas e o sentido das perguntas ou afirmações.\n"
-            "3. Limpeza inteligente: Remova hesitações, ruídos vocais ('hã', 'éé', 'hum', 'tipo assim' quando usado como hesitação), gaguejos e repetições involuntárias.\n"
-            "4. Não resuma, não responda ao usuário e não adicione explicações ou comentários. Retorne EXCLUSIVAMENTE o texto transcrito e limpo.\n"
-            "5. Se o áudio for apenas silêncio, chiado ou inaudível, retorne exatamente uma string vazia."
+            "1. Transcreva o que o usuário disse no idioma detectado (Português do Brasil).\n"
+            "2. Pontuação expressiva e precisa.\n"
+            "3. Remova hesitações ('hã', 'éé', gaguejos).\n"
+            "4. Retorne EXCLUSIVAMENTE o texto transcrito. Se for inaudível ou silêncio, retorne vazio."
         )
 
-        audio_part = types.Part.from_bytes(
-            data=audio_bytes,
-            mime_type="audio/wav"
-        )
-
+        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
         prompt = "Transcreva este áudio exatamente conforme as instruções de pontuação e limpeza."
 
-        try:
+        def _call():
             response = self.client.models.generate_content(
                 model=self.model,
                 contents=[audio_part, prompt],
@@ -124,15 +137,19 @@ class GeminiTranscriber:
                     temperature=0.1
                 )
             )
-            text = response.text or ""
-            return text.strip()
+            return (response.text or "").strip()
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_call)
+                return fut.result(timeout=6)
         except Exception as e:
-            print(f"[GeminiTranscriber] Erro na chamada Gemini: {e}")
+            print(f"[GeminiTranscriber] Erro ou timeout na chamada Gemini: {e}")
             return ""
 
-    def translate(self, audio_bytes: bytes, target_lang: str) -> str:
-        """Tradução multimodal direta com estrita coloquialidade humana nativa"""
-        if not audio_bytes or not self.client:
+    def translate_text(self, text: str, target_lang: str) -> str:
+        """Tradução de texto via Gemini com timeout de segurança de 5s"""
+        if not text or not self.client:
             return ""
 
         lang_map = {
@@ -145,70 +162,72 @@ class GeminiTranscriber:
         target_name = lang_map.get(target_lang.lower(), target_lang)
 
         system_instruction = (
-            f"Você é um tradutor de fala de altíssima fidelidade e naturalidade coloquial humana.\n"
-            f"Sua tarefa é ouvir o áudio fornecido e traduzi-lo DIRETAMENTE para o idioma de destino: {target_name}.\n\n"
-            "Diretrizes Rígidas de Tradução:\n"
-            "1. Coloquialidade e Fluência Nativa: Mantenha rigorosamente o tom natural, casual e coloquial da fala humana falada no dia a dia. Quem ler o texto deve ter a sensação nítida de que foi digitado espontaneamente por uma pessoa nativa naquele idioma (como numa conversa amigável de chat ou trabalho informal).\n"
-            "2. Proibido Soar Robótico: Não soe como tradutor automático formal, engessado, literal ou com jargões robóticos.\n"
-            "3. Fidelidade à Intenção: Não invente palavras rebuscadas, não distorça a intenção original e não adicione pontuações artificiais desnecessárias.\n"
-            "4. Retorno Limpo: Retorne EXCLUSIVAMENTE o texto final traduzido. Não adicione introduções, aspas extras, notas explicativas ou comentários.\n"
-            "5. Silêncio ou Ruído: Se o áudio for inaudível, vazio ou ruído estático, retorne exatamente uma string vazia."
+            f"Você é um tradutor nativo coloquial de altíssima fidelidade.\n"
+            f"Traduza o texto fornecido diretamente para {target_name}.\n\n"
+            "Diretrizes Rígidas:\n"
+            "1. Mantenha o tom 100% natural, casual e coloquial da fala cotidiana entre amigos ou colegas.\n"
+            "2. Não soe formal, literal ou robótico.\n"
+            "3. Retorne APENAS E EXCLUSIVAMENTE a frase final traduzida, sem aspas, sem marcadores e sem explicações."
         )
 
-        audio_part = types.Part.from_bytes(
-            data=audio_bytes,
-            mime_type="audio/wav"
-        )
-
-        prompt = f"Traduza este áudio diretamente para {target_name} respeitando estritamente a naturalidade coloquial humana."
-
-        try:
+        def _call():
             response = self.client.models.generate_content(
                 model=self.model,
-                contents=[audio_part, prompt],
+                contents=[text],
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
                     temperature=0.2
                 )
             )
-            text = response.text or ""
-            return text.strip()
+            return (response.text or "").strip()
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_call)
+                return fut.result(timeout=5)
         except Exception as e:
-            print(f"[GeminiTranscriber Translation] Erro na chamada Gemini: {e}")
+            print(f"[GeminiTranscriber Translation] Erro ou timeout na chamada Gemini: {e}")
             return ""
 
 
 class TranscriptionEngine:
-    """Fachada unificada que direciona para Groq ou Gemini conforme configuração e idioma"""
-    def __init__(self, engine_type: str = "groq", groq_api_key: str = "", gemini_api_key: str = "", gemini_model: str = "gemini-flash-latest"):
+    """Fachada unificada ultra-rápida (~500ms para tradução completa) com zero travamento"""
+    def __init__(self, engine_type: str = "groq", groq_api_key: str = "", gemini_api_key: str = "", gemini_model: str = "gemini-flash-lite-latest"):
         self.engine_type = engine_type.lower()
         self.groq_engine = GroqTranscriber(api_key=groq_api_key)
-        self.gemini_engine = GeminiTranscriber(api_key=gemini_api_key, model=gemini_model)
+        self.gemini_engine = GeminiTranscriber(api_key=gemini_api_key, model=gemini_model or "gemini-flash-lite-latest")
 
     def transcribe(self, audio_bytes: bytes, target_lang: str = "original") -> str:
         target_lang = (target_lang or "original").lower()
 
-        # 1. Modo Normal (Transcrição Original sem tradução)
+        # 1. Transcrição do áudio em texto em ~250ms (Groq Whisper Turbo com fallback Gemini)
+        raw_text = ""
+        if self.engine_type == "groq" and self.groq_engine.api_key:
+            raw_text = self.groq_engine.transcribe(audio_bytes)
+            if not raw_text and self.gemini_engine.client:
+                print("[TranscriptionEngine] Groq sem resposta, tentando fallback no Gemini...")
+                raw_text = self.gemini_engine.transcribe(audio_bytes)
+        else:
+            raw_text = self.gemini_engine.transcribe(audio_bytes)
+            if not raw_text and self.groq_engine.api_key:
+                raw_text = self.groq_engine.transcribe(audio_bytes)
+
+        if not raw_text:
+            return ""
+
+        # 2. Se for modo normal (sem tradução), retorna o texto original transcrito instantaneamente
         if target_lang in ("original", "none", ""):
-            if self.engine_type == "groq":
-                text = self.groq_engine.transcribe(audio_bytes)
-                if not text and self.gemini_engine.client:
-                    print("[TranscriptionEngine] Groq sem resposta, tentando fallback no Gemini...")
-                    text = self.gemini_engine.transcribe(audio_bytes)
-                return text
-            else:
-                return self.gemini_engine.transcribe(audio_bytes)
+            return raw_text
 
-        # 2. Modo Tradução para Inglês (en): Prioriza endpoint de tradução nativo da Groq (~300ms)
-        if target_lang == "en":
-            if self.engine_type == "groq" and self.groq_engine.api_key:
-                text = self.groq_engine.translate_to_english(audio_bytes)
-                if text:
-                    return text
-                print("[TranscriptionEngine] Groq translation falhou ou vazia, tentando fallback no Gemini...")
-            
-            # Fallback transparente no Gemini Flash
-            return self.gemini_engine.translate(audio_bytes, "en")
+        # 3. Modo Tradução Coloquial em Alta Velocidade (~250ms)
+        translated = ""
+        if self.groq_engine.api_key:
+            translated = self.groq_engine.translate_text(raw_text, target_lang)
 
-        # 3. Demais idiomas (es, fr, de, it): Google Gemini Flash com diretriz coloquial
-        return self.gemini_engine.translate(audio_bytes, target_lang)
+        # Se Groq falhar ou não estiver configurada, tenta Gemini com timeout
+        if not translated and self.gemini_engine.client:
+            print("[TranscriptionEngine] Tentando tradução via Gemini Flash...")
+            translated = self.gemini_engine.translate_text(raw_text, target_lang)
+
+        # Se por qualquer motivo a tradução falhar, retorna a transcrição original (nunca perde o que foi falado)
+        return translated if translated else raw_text
