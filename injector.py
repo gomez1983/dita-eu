@@ -56,12 +56,8 @@ def inject_text(text: str, restore_clipboard: bool = True):
         pyperclip.copy(text)
         time.sleep(0.05)
 
-        # Simula Ctrl+V
-        _send_key_event(VK_CONTROL, 0)
-        _send_key_event(VK_V, 0)
-        time.sleep(0.03)
-        _send_key_event(VK_V, KEYEVENTF_KEYUP)
-        _send_key_event(VK_CONTROL, KEYEVENTF_KEYUP)
+        # Simula Ctrl+V atomicamente via SendInput (liberando modificadores)
+        _send_ctrl_shortcut(VK_V)
 
         # Aguarda tempo suficiente (350ms) para que aplicativos mais lentos (VS Code, navegadores)
         # terminem de consumir o Ctrl+V antes de restaurar o clipboard antigo
@@ -421,7 +417,14 @@ def get_selected_text() -> str:
                 _replace_transform_clipboard(hwnd, [])
                 _send_ctrl_shortcut(VK_C)
                 time.sleep(0.04)
+                # Dá tempo adicional caso navegadores/editores pesados (Reddit, Chrome)
+                # demorem mais que 40ms para disponibilizar o texto no clipboard
                 with _open_transform_clipboard(hwnd):
+                    if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                        for _ in range(10):
+                            time.sleep(0.01)
+                            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                                break
                     try:
                         _exclude_clipboard_history()
                     except Exception:

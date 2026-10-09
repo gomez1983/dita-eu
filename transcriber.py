@@ -144,25 +144,30 @@ class GroqTranscriber:
             if not instruction:
                 return ""
 
-            response = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.3-70b-versatile",
-                    "messages": [
-                        {"role": "system", "content": TRANSFORM_SYSTEM_PROMPT},
-                        {"role": "user", "content": _transform_input(original_text, instruction)}
-                    ],
-                    "temperature": 0.2
-                },
-                timeout=6
-            )
-            if response.status_code != 200:
-                return ""
-            choices = response.json().get("choices") or []
-            if not choices:
-                return ""
-            return (choices[0].get("message", {}).get("content") or "").strip()
+            models_to_try = ["llama-3.3-70b-versatile", "qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+            for model in models_to_try:
+                try:
+                    response = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": TRANSFORM_SYSTEM_PROMPT},
+                                {"role": "user", "content": _transform_input(original_text, instruction)}
+                            ],
+                            "temperature": 0.2
+                        },
+                        timeout=6
+                    )
+                    if response.status_code == 200:
+                        choices = response.json().get("choices") or []
+                        if choices:
+                            return (choices[0].get("message", {}).get("content") or "").strip()
+                except Exception:
+                    continue
+
+            return ""
         except Exception:
             # Do not log exception details: SDK/network errors may echo input.
             print("[Groq Voice Transform] Falha na transformação.")
