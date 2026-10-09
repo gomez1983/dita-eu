@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
     "gemini_model": "gemini-flash-lite-latest",
     "trigger_keys": ["f8"],
+    "transform_trigger_keys": ["shift+f8"],
     "microphone_index": None,
     "hud_bottom_offset": 350,
     "theme": "dark",

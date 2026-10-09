@@ -15,6 +15,9 @@ class FloatingHUD(QtWidgets.QWidget):
         self.translation_target = (translation_target or "original").lower()
         self.current_state = "idle"
         self.volume_level = 0.0
+        self._notice_timer = QtCore.QTimer(self)
+        self._notice_timer.setSingleShot(True)
+        self._notice_timer.timeout.connect(self._hide_notice)
 
         self.setWindowFlags(
             QtCore.Qt.WindowType.FramelessWindowHint |
@@ -52,6 +55,16 @@ class FloatingHUD(QtWidgets.QWidget):
 
     def set_translation_target(self, target: str):
         self.translation_target = (target or "original").lower()
+        self._update_mode_layout()
+        self._apply_theme_styles()
+
+    def _update_mode_layout(self):
+        if self.current_state in ("transform", "transform_processing", "no_selection"):
+            self.lang_badge.hide()
+            self.label.ensurePolished()
+            # Leave room for the longest processing message and the animated dot.
+            self.setFixedSize(max(220, self.label.sizeHint().width() + 60), 52)
+            return
         if self.translation_target not in ("original", "none", ""):
             code = self.translation_target.upper()
             self.lang_badge.setText(f"🌐 {code}")
@@ -60,11 +73,11 @@ class FloatingHUD(QtWidgets.QWidget):
         else:
             self.lang_badge.hide()
             self.setFixedSize(220, 52)
-        self._apply_theme_styles()
 
     def set_theme(self, theme: str):
         self.theme = theme
         self._apply_theme_styles()
+        self._update_mode_layout()
         self.update()
 
     def _apply_theme_styles(self):
@@ -118,33 +131,81 @@ class FloatingHUD(QtWidgets.QWidget):
         self.move(x, y)
 
     def set_recording(self):
+        self._notice_timer.stop()
         self.current_state = "recording"
         self.label.setText("Ouvindo...")
         self.dot.setStyleSheet("border-radius: 7px; background-color: #ef4444;")
+        self._update_mode_layout()
+        self.reposition()
+        self.show()
+
+    @QtCore.pyqtSlot()
+    def set_transform(self):
+        self._notice_timer.stop()
+        self.current_state = "transform"
+        self.label.setText("✨ Transformar")
+        self.dot.setFixedSize(14, 14)
+        color = "#9333ea" if self.theme == "light" else "#a855f7"
+        self.dot.setStyleSheet(f"border-radius: 7px; background-color: {color};")
+        self._update_mode_layout()
         self.reposition()
         self.show()
 
     def update_volume(self, volume: float):
-        if self.current_state == "recording":
+        if self.current_state in ("recording", "transform"):
             size = int(10 + min(volume * 80, 8))
             radius = size // 2
             self.dot.setFixedSize(size, size)
-            self.dot.setStyleSheet(f"border-radius: {radius}px; background-color: #ef4444;")
+            color = "#ef4444"
+            if self.current_state == "transform":
+                color = "#9333ea" if self.theme == "light" else "#a855f7"
+            self.dot.setStyleSheet(f"border-radius: {radius}px; background-color: {color};")
 
     def set_processing(self):
+        self._notice_timer.stop()
         self.current_state = "processing"
         is_translating = self.translation_target not in ("original", "none", "")
         self.label.setText("Traduzindo..." if is_translating else "Digitando...")
         self.dot.setFixedSize(14, 14)
         dot_color = "#2563eb" if self.theme == "light" else "#3b82f6"
         self.dot.setStyleSheet(f"border-radius: 7px; background-color: {dot_color};")
+        self._update_mode_layout()
         self.reposition()
         self.show()
+
+    @QtCore.pyqtSlot()
+    def set_transform_processing(self):
+        self._notice_timer.stop()
+        self.current_state = "transform_processing"
+        self.label.setText("Processando transformação...")
+        self.dot.setFixedSize(14, 14)
+        color = "#2563eb" if self.theme == "light" else "#3b82f6"
+        self.dot.setStyleSheet(f"border-radius: 7px; background-color: {color};")
+        self._update_mode_layout()
+        self.reposition()
+        self.show()
+
+    @QtCore.pyqtSlot()
+    def show_no_selection(self):
+        self.current_state = "no_selection"
+        self.label.setText("Selecione um texto primeiro")
+        self.dot.setFixedSize(14, 14)
+        self.dot.setStyleSheet("border-radius: 7px; background-color: #f59e0b;")
+        self._update_mode_layout()
+        self.reposition()
+        self.show()
+        self._notice_timer.start(1500)
+
+    def _hide_notice(self):
+        # An older notice must never hide a newly started recording.
+        if self.current_state == "no_selection":
+            self.hide_hud()
 
     def update_preview_text(self, *args, **kwargs):
         """Método stub defensivo: previne qualquer AttributeError caso sinais legados tentem emitir texto de prévia."""
         pass
 
     def hide_hud(self):
+        self._notice_timer.stop()
         self.current_state = "idle"
         self.hide()
