@@ -3,6 +3,7 @@ import os
 import requests
 import concurrent.futures
 import time
+import threading
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -272,14 +273,16 @@ class GeminiTranscriber:
 
         deadline = time.monotonic() + TRANSFORM_TIMEOUT_SECONDS
 
+        cancelled_flag = threading.Event()
+
         def _config(system_instruction, temperature):
             remaining_ms = int((deadline - time.monotonic()) * 1000)
-            if remaining_ms <= 0:
+            if remaining_ms <= 0 or cancelled_flag.is_set():
                 raise TimeoutError()
             return types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=temperature,
-                http_options=types.HttpOptions(timeout=min(6000, remaining_ms))
+                http_options=types.HttpOptions(timeout=min(6000, max(1, remaining_ms)))
             )
 
         def _call():
@@ -294,7 +297,7 @@ class GeminiTranscriber:
                 )
             )
             instruction = (response.text or "").strip()
-            if not instruction:
+            if not instruction or time.monotonic() >= deadline or cancelled_flag.is_set():
                 return ""
             response = self.client.models.generate_content(
                 model="gemini-flash-lite-latest",
@@ -308,9 +311,11 @@ class GeminiTranscriber:
             future = executor.submit(_call)
             return future.result(timeout=TRANSFORM_TIMEOUT_SECONDS)
         except Exception:
+            cancelled_flag.set()
             print("[Gemini Voice Transform] Falha ou timeout na transformação.")
             return ""
         finally:
+            cancelled_flag.set()
             # A context manager would wait for an unresponsive SDK call during
             # shutdown, defeating future.result's timeout. Late results are ignored.
             executor.shutdown(wait=False, cancel_futures=True)

@@ -248,6 +248,16 @@ class DictationApp(QtCore.QObject):
             self.sig_volume_update.emit(self.recorder.current_volume)
 
     def _normalize_key(self, key) -> str:
+        vk = getattr(key, 'vk', None)
+        if vk is not None:
+            if vk in (0x10, 0xA0, 0xA1):
+                return "shift"
+            if vk in (0x11, 0xA2, 0xA3):
+                return "ctrl"
+            if vk in (0x12, 0xA4, 0xA5):
+                return "alt"
+            if vk in (0x5B, 0x5C):
+                return "cmd"
         if isinstance(key, keyboard.Key):
             name = key.name.lower()
             if "shift" in name:
@@ -259,7 +269,14 @@ class DictationApp(QtCore.QObject):
             return name
         elif hasattr(key, 'char') and key.char:
             return key.char.lower()
-        return str(key).lower().replace("'", "")
+        key_str = str(key).lower().replace("'", "")
+        if "shift" in key_str:
+            return "shift"
+        if "ctrl" in key_str:
+            return "ctrl"
+        if "alt" in key_str:
+            return "alt"
+        return key_str
 
     def _start_keyboard_listener(self):
         self.keyboard_listener = _TransformKeyboardListener(

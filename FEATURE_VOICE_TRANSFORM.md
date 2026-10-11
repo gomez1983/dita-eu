@@ -31,9 +31,13 @@ O **Voice Transform** permite ao usuário selecionar qualquer bloco de texto já
 [Usuário pressiona e SEGURA 'Shift + F8']
               │
               ├─► 1. Dita-eu captura o texto selecionado:
-              │      - Salva o clipboard anterior.
-              │      - Dispara Win32 SendInput (Ctrl + C).
-              │      - Aguarda 40ms e lê o texto da seleção do clipboard.
+              │      - Salva os formatos do clipboard anterior e sua sequência.
+              │      - Dispara Win32 SendInput (Ctrl + C) com scan codes.
+              │      - Aguarda sequência nova e texto Unicode por até 800ms,
+              │        consultando a cada 10ms com o clipboard fechado.
+              │      - Confere foco e processo proprietário antes da leitura.
+              │      - Restaura o snapshot somente se a sequência capturada
+              │        ainda estiver vigente; preserva cópias concorrentes.
               │
               ├─► 2. Se a seleção estiver vazia:
               │      - HUD exibe aviso rápido "Nenhum texto selecionado" e cancela com segurança.
@@ -104,3 +108,11 @@ Diretrizes estritas:
   Se a transcrição da ordem retornar vazia, cancelar a operação sem sobrescrever o texto da tela do usuário.
 - **Watchdog Timeout:**  
   Manter o timer de segurança de 15s no HUD para garantir que a janela nunca fique travada na tela em caso de instabilidade na API.
+
+### Captura Win32 — revisão de 11/10/2026
+
+- A captura não esvazia o clipboard antes de solicitar a cópia. Sem uma sequência nova, retorna seleção vazia sem reescrever o conteúdo anterior.
+- Os eventos usam `KEYEVENTF_SCANCODE`, `wVk = 0`, scan codes mapeados e o marcador próprio do aplicativo. Shift e outros modificadores pressionados são neutralizados e restaurados no mesmo lote para que Shift + F8 produza Ctrl + C durante o Push-to-Talk.
+- A comparação de origem usa PID, permitindo a janela auxiliar do Chromium. Origem desconhecida ou outro processo cancela a captura.
+- O limite de 800ms se aplica ao polling; chamadas Win32 síncronas e restauração têm suas próprias limitações. A política de histórico da cópia externa não pode ser garantida pelo Dita-eu.
+- Testes simulados validam atraso, concorrência, restauração e scan codes. Compatibilidade real com Reddit e Dota 2 ainda requer validação manual.

@@ -14,6 +14,7 @@ VK_CONTROL = 0x11
 VK_V = 0x56
 VK_BACK = 0x08
 KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_SCANCODE = 0x0008
 
 user32 = ctypes.windll.user32
 
@@ -91,6 +92,8 @@ _LINE_COPY_FORMATS = (
 _CHROMIUM_METADATA_FORMAT = "Chromium Web Custom MIME Data Format"
 _VSCODE_METADATA_FORMAT = "vscode-editor-data"
 _MAX_COPY_METADATA_BYTES = 1024 * 1024
+_COPY_TIMEOUT_SECONDS = 0.8
+_COPY_POLL_INTERVAL = 0.01
 
 
 class _KEYBDINPUT(ctypes.Structure):
@@ -125,6 +128,12 @@ user32.SendInput.restype = wintypes.UINT
 user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
 user32.GetAsyncKeyState.restype = ctypes.c_short
 user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetClipboardSequenceNumber.argtypes = ()
+user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+user32.GetClipboardOwner.argtypes = ()
+user32.GetClipboardOwner.restype = wintypes.HWND
+user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 user32.GetClipboardData.argtypes = (wintypes.UINT,)
 user32.GetClipboardData.restype = wintypes.HANDLE
 user32.SetClipboardData.argtypes = (wintypes.UINT, wintypes.HANDLE)
@@ -149,6 +158,10 @@ kernel32.GlobalFree.argtypes = (wintypes.HGLOBAL,)
 kernel32.GlobalFree.restype = wintypes.HGLOBAL
 
 
+user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
+user32.MapVirtualKeyW.restype = wintypes.UINT
+
+
 def get_foreground_window() -> int:
     """Return the target window identity without activating any window."""
     return int(user32.GetForegroundWindow() or 0)
@@ -163,9 +176,19 @@ def _send_input_events(events):
     inputs = (_INPUT * len(events))()
     for item, (key, flags) in zip(inputs, events):
         item.type = 1  # INPUT_KEYBOARD
-        item.ki = _KEYBDINPUT(key, 0, flags | (1 if key in _EXTENDED_KEYS else 0),
-                               0, TRANSFORM_INPUT_MARKER)
-    if user32.SendInput(len(inputs), inputs, ctypes.sizeof(_INPUT)) != len(inputs):
+        scan = user32.MapVirtualKeyW(key, 0)
+        if not scan:
+            raise OSError("Could not map keyboard scan code")
+        item.ki = _KEYBDINPUT(0, scan, flags | KEYEVENTF_SCANCODE
+                              | (1 if key in _EXTENDED_KEYS else 0),
+                              0, TRANSFORM_INPUT_MARKER)
+    sent = user32.SendInput(len(inputs), inputs, ctypes.sizeof(_INPUT))
+    if sent == 0:
+        # Legacy compatibility fallback; this does not bypass Windows UIPI.
+        for key, flags in events:
+            scan = user32.MapVirtualKeyW(key, 0)
+            user32.keybd_event(key, scan, flags | (1 if key in _EXTENDED_KEYS else 0), TRANSFORM_INPUT_MARKER)
+    elif sent != len(inputs):
         raise OSError("Windows did not accept the keyboard shortcut")
 
 
@@ -218,7 +241,7 @@ def _open_transform_clipboard(hwnd):
         win32clipboard.CloseClipboard()
 
 
-def _snapshot_clipboard(hwnd):
+def _snapshot_clipboard(hwnd, with_sequence=False):
     """Copy all memory formats to RAM; refuse unsupported handles before editing.
 
     This preserves empty clipboards, Unicode/ANSI text, HTML/RTF, DIB/PNG images,
@@ -247,6 +270,8 @@ def _snapshot_clipboard(hwnd):
                 snapshot.append((fmt, ctypes.string_at(address, size)))
             finally:
                 kernel32.GlobalUnlock(handle)
+        if with_sequence:
+            return snapshot, user32.GetClipboardSequenceNumber()
     return snapshot
 
 
@@ -277,29 +302,50 @@ def _exclude_clipboard_history():
         _set_clipboard_bytes(win32clipboard.RegisterClipboardFormat(name), b"\0\0\0\0")
 
 
-def _replace_transform_clipboard(hwnd, formats, transient=True):
+def _replace_transform_clipboard(hwnd, formats, transient=True, expected_sequence=None):
+    failure = None
     with _open_transform_clipboard(hwnd):
-        win32clipboard.EmptyClipboard()
-        if transient:
-            _exclude_clipboard_history()
-        for fmt, payload in formats:
-            _set_clipboard_bytes(fmt, payload)
-        if transient and formats:
-            # Original history metadata may have opted in. Restoration should
-            # not create another history entry containing the original payload.
-            _exclude_clipboard_history()
+        # Compare while holding the clipboard: a newer user copy must survive.
+        if (expected_sequence is not None
+                and user32.GetClipboardSequenceNumber() != expected_sequence):
+            return False
+        try:
+            win32clipboard.EmptyClipboard()
+            if transient:
+                _exclude_clipboard_history()
+            for fmt, payload in formats:
+                _set_clipboard_bytes(fmt, payload)
+            if transient and formats:
+                # Original history metadata may have opted in. Restoration should
+                # not create another history entry containing the original payload.
+                _exclude_clipboard_history()
+        except Exception as error:
+            failure = error
+    if failure is not None:
+        # Windows can advance the sequence on CloseClipboard. Save that version
+        # only if our owner still holds it; a competing copy must survive retry.
+        error = OSError("Could not replace clipboard formats")
+        current = user32.GetClipboardSequenceNumber()
+        if user32.GetClipboardOwner() == hwnd:
+            error.clipboard_sequence = current
+        raise error from failure
+    return True
 
 
-def _restore_transform_clipboard(hwnd, snapshot):
+def _restore_transform_clipboard(hwnd, snapshot, expected_sequence=None):
     # Retry the complete restoration after a partial write failure as well as
     # retrying OpenClipboard itself. The snapshot stays in RAM until completion.
     for attempt in range(3):
         try:
-            _replace_transform_clipboard(hwnd, snapshot, transient=bool(snapshot))
-            return
-        except Exception:
+            if expected_sequence is None:
+                return _replace_transform_clipboard(hwnd, snapshot, transient=bool(snapshot))
+            return _replace_transform_clipboard(
+                hwnd, snapshot, transient=bool(snapshot), expected_sequence=expected_sequence)
+        except Exception as error:
             if attempt == 2:
                 raise
+            if expected_sequence is not None:
+                expected_sequence = getattr(error, "clipboard_sequence", expected_sequence)
             time.sleep(0.02)
 
 
@@ -403,42 +449,77 @@ def _clipboard_is_line_copy():
     return False
 
 
-def get_selected_text() -> str:
-    """Capture Ctrl+C selection and always attempt to restore the prior clipboard.
+def _clipboard_belongs_to_target(target):
+    # Chromium may copy through a hidden window in the browser process.
+    owner = user32.GetClipboardOwner()
+    if not owner or not target:
+        return False
+    owner_pid, target_pid = wintypes.DWORD(), wintypes.DWORD()
+    user32.GetWindowThreadProcessId(owner, ctypes.byref(owner_pid))
+    user32.GetWindowThreadProcessId(target, ctypes.byref(target_pid))
+    return bool(target_pid.value and owner_pid.value == target_pid.value)
 
-    Clearing first prevents old clipboard text from masquerading as a selection.
+
+def get_selected_text():
+    """Capture a fresh Ctrl+C without clearing or locking out the source app.
+
+    A new sequence, not different text, distinguishes a copy from stale data.
     The external application's Ctrl+C may itself enter Windows clipboard history
-    before we can add exclusion flags; its history policy is outside our control.
+    according to its own policy; reading it does not change that policy.
     """
     try:
         with _TRANSFORM_CLIPBOARD_LOCK, _clipboard_window() as hwnd:
-            snapshot = _snapshot_clipboard(hwnd)
+            target = get_foreground_window()
+            # Pair the baseline with its snapshot under the same clipboard lock.
+            snapshot, sequence = _snapshot_clipboard(hwnd, with_sequence=True)
+            copied_sequence = None
             try:
-                _replace_transform_clipboard(hwnd, [])
+                if (not target or get_foreground_window() != target
+                        or user32.GetClipboardSequenceNumber() != sequence):
+                    return ""
                 _send_ctrl_shortcut(VK_C)
-                time.sleep(0.04)
-                # Dá tempo adicional caso navegadores/editores pesados (Reddit, Chrome)
-                # demorem mais que 40ms para disponibilizar o texto no clipboard
-                with _open_transform_clipboard(hwnd):
-                    if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
-                        for _ in range(10):
-                            time.sleep(0.01)
-                            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
-                                break
-                    try:
-                        _exclude_clipboard_history()
-                    except Exception:
-                        # The source application may still own its copy. These
-                        # flags are only best effort for externally copied data.
-                        pass
-                    if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                deadline = time.monotonic() + _COPY_TIMEOUT_SECONDS
+                while time.monotonic() < deadline:
+                    if get_foreground_window() != target:
                         return ""
-                    if _clipboard_is_line_copy():
-                        return ""
-                    text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
-                    return text if isinstance(text, str) and text.strip() else ""
+                    current = user32.GetClipboardSequenceNumber()
+                    if current != sequence:
+                        if not _clipboard_belongs_to_target(target):
+                            return ""
+                        copied_sequence = current
+                        if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                            try:
+                                # One attempt per poll. Never sleep with it open,
+                                # or compete while the source is still writing.
+                                win32clipboard.OpenClipboard(hwnd)
+                            except Exception:
+                                pass
+                            else:
+                                try:
+                                    if (get_foreground_window() != target
+                                            or not _clipboard_belongs_to_target(target)):
+                                        return ""
+                                    current = user32.GetClipboardSequenceNumber()
+                                    if current != sequence:
+                                        copied_sequence = current
+                                        try:
+                                            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                                                if _clipboard_is_line_copy():
+                                                    return ""
+                                                text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+                                                if get_foreground_window() != target:
+                                                    return ""
+                                                return text if isinstance(text, str) and text.strip() else ""
+                                        finally:
+                                            # Text or metadata may render delayed data.
+                                            copied_sequence = user32.GetClipboardSequenceNumber()
+                                finally:
+                                    win32clipboard.CloseClipboard()
+                    time.sleep(min(_COPY_POLL_INTERVAL, max(0, deadline - time.monotonic())))
+                return ""
             finally:
-                _restore_transform_clipboard(hwnd, snapshot)
+                if copied_sequence is not None:
+                    _restore_transform_clipboard(hwnd, snapshot, expected_sequence=copied_sequence)
     except Exception:
         # Never log clipboard payloads or paste stale text on any failure.
         return ""
