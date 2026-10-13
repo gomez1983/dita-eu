@@ -156,6 +156,31 @@ kernel32.GlobalAlloc.argtypes = (wintypes.UINT, ctypes.c_size_t)
 kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
 kernel32.GlobalFree.argtypes = (wintypes.HGLOBAL,)
 kernel32.GlobalFree.restype = wintypes.HGLOBAL
+kernel32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+kernel32.CloseHandle.restype = wintypes.BOOL
+
+
+class _PROCESSENTRY32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", wintypes.LONG),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", ctypes.c_char * 260),
+    ]
+
+
+kernel32.Process32First.argtypes = (wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32))
+kernel32.Process32First.restype = wintypes.BOOL
+kernel32.Process32Next.argtypes = (wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32))
+kernel32.Process32Next.restype = wintypes.BOOL
 
 
 user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
@@ -449,15 +474,76 @@ def _clipboard_is_line_copy():
     return False
 
 
+def _get_process_lineage(pid: int) -> set:
+    """Retorna o conjunto de PIDs na árvore de processos (ancestrais e descendentes diretos)."""
+    if not pid:
+        return set()
+    lineage = {pid}
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == -1:
+        return lineage
+    try:
+        pe = _PROCESSENTRY32()
+        pe.dwSize = ctypes.sizeof(_PROCESSENTRY32)
+        parent_map = {}
+        if kernel32.Process32First(snapshot, ctypes.byref(pe)):
+            while True:
+                p_id = int(pe.th32ProcessID)
+                pp_id = int(pe.th32ParentProcessID)
+                if p_id:
+                    parent_map[p_id] = pp_id
+                if not kernel32.Process32Next(snapshot, ctypes.byref(pe)):
+                    break
+
+        # Mapeia ancestrais
+        curr = pid
+        for _ in range(10):
+            parent = parent_map.get(curr)
+            if not parent or parent in lineage:
+                break
+            lineage.add(parent)
+            curr = parent
+
+        # Mapeia filhos e netos diretos
+        for _ in range(5):
+            new_added = False
+            for child, parent in parent_map.items():
+                if parent in lineage and child not in lineage:
+                    lineage.add(child)
+                    new_added = True
+            if not new_added:
+                break
+    except Exception:
+        pass
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return lineage
+
+
 def _clipboard_belongs_to_target(target):
-    # Chromium may copy through a hidden window in the browser process.
-    owner = user32.GetClipboardOwner()
-    if not owner or not target:
+    # Suporta processos únicos (Dota 2, Reddit/Chrome) e multi-processos (Teams/WebView2).
+    if not target:
         return False
+    owner = user32.GetClipboardOwner()
+    if not owner:
+        return False
+
     owner_pid, target_pid = wintypes.DWORD(), wintypes.DWORD()
-    user32.GetWindowThreadProcessId(owner, ctypes.byref(owner_pid))
-    user32.GetWindowThreadProcessId(target, ctypes.byref(target_pid))
-    return bool(target_pid.value and owner_pid.value == target_pid.value)
+    if not user32.GetWindowThreadProcessId(owner, ctypes.byref(owner_pid)):
+        return False
+    if not user32.GetWindowThreadProcessId(target, ctypes.byref(target_pid)):
+        return False
+
+    o_pid = int(owner_pid.value)
+    t_pid = int(target_pid.value)
+    if not o_pid or not t_pid:
+        return False
+    if o_pid == t_pid:
+        return True
+
+    # Verifica se pertencem à mesma árvore de processos (arquitetura multi-processo de Teams/Chrome/Edge)
+    target_tree = _get_process_lineage(t_pid)
+    return o_pid in target_tree
 
 
 def get_selected_text():

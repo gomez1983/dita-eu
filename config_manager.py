@@ -19,6 +19,29 @@ BASE_DIR = get_base_dir()
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 
+PRESET_PROMPTS = {
+    "dota": (
+        "Reescreva a mensagem com a personalidade caricata e impaciente de um jogador de Dota 2 altamente estressado: "
+        "use termos técnicos do jogo (TF, BKB, ward, Rosh, tilt, sem dedo, farmar jungle), caixa alta para ênfase de revolta, "
+        "sarcasmo agressivo e indignação com o posicionamento dos aliados, sem usar filtros ou formalidade."
+    ),
+    "pirata": (
+        "Reescreva o texto como um pirata beberrão em alto-mar: use jargões navais (marujo, prancha, rum, sete mares, "
+        "tempestade, canhões), entonação rústica, exclamativa e ameaçadora de forma bem humorada."
+    ),
+    "adolescente": (
+        "Reescreva o texto no tom caricato, hiperbólico e histérico de uma adolescente obcecada fofocando com a melhor amiga (bestie): "
+        "use MUITAS PALAVRAS EM CAIXA ALTA para choque ou ênfase dramática, gírias atuais (tipo 'juro', 'literalmente morri', 'miga', "
+        "'divou', 'surreal', 'que ódiooo', 'mano do céu', 'passando mal'), repetição exagerada de vogais, emoticons e emojis caricatos "
+        "(😭, 💀, 💅, ✨, 👁️👄👁️, 🤡), mantendo um humor teatral irresistível."
+    ),
+    "corporativo": (
+        "Reescreva o texto no padrão corporativo executivo de alto escalão: linguagem polida, impessoal, assertiva, "
+        "orientada a resultados e alinhamento estratégico, sem gírias ou informalidades."
+    ),
+    "livre": ""
+}
+
 DEFAULT_CONFIG = {
     "engine": "groq",  # "groq" ou "gemini"
     "groq_api_key": os.getenv("GROQ_API_KEY", ""),
@@ -30,7 +53,9 @@ DEFAULT_CONFIG = {
     "hud_bottom_offset": 350,
     "theme": "dark",
     "autostart": False,
-    "translation_target": "original"  # "original", "en", "es", "fr", "de", "it"
+    "translation_target": "original",  # "original", "en", "es", "fr", "de", "it", "custom"
+    "custom_preset": "dota",
+    "custom_prompt": PRESET_PROMPTS["dota"]
 }
 
 def load_config() -> dict:

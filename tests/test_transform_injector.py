@@ -442,6 +442,17 @@ class NativeClipboardTests(unittest.TestCase):
              patch.object(injector.user32, "GetWindowThreadProcessId", return_value=0):
             self.assertFalse(injector._clipboard_belongs_to_target(10))
 
+    def test_clipboard_origin_accepts_child_process_in_lineage(self):
+        def process_id(hwnd, pid):
+            val = 200 if hwnd == 20 else 100
+            ctypes.cast(pid, ctypes.POINTER(injector.wintypes.DWORD)).contents.value = val
+            return 1
+        with patch.object(injector.user32, "GetClipboardOwner", return_value=20), \
+             patch.object(injector.user32, "GetWindowThreadProcessId", side_effect=process_id), \
+             patch.object(injector, "_get_process_lineage", return_value={100, 200}):
+            self.assertTrue(injector._clipboard_belongs_to_target(10))
+
+
     def test_conditional_replace_checks_sequence_while_open_before_any_mutation(self):
         state = {"open": False}
         @contextmanager

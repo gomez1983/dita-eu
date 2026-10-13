@@ -386,7 +386,7 @@ class SettingsWindow(QtWidgets.QWidget):
                     border-radius: 8px;
                     padding: 12px;
                 }
-                QLineEdit, QComboBox, QSpinBox {
+                QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {
                     background-color: #ffffff;
                     border: 1px solid #cbd5e1;
                     border-radius: 6px;
@@ -395,7 +395,7 @@ class SettingsWindow(QtWidgets.QWidget):
                     font-size: 13px;
                     font-weight: 500;
                 }
-                QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+                QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
                     border: 1px solid #0f172a;
                 }
                 QComboBox::drop-down {
@@ -503,7 +503,7 @@ class SettingsWindow(QtWidgets.QWidget):
                     border-radius: 8px;
                     padding: 12px;
                 }
-                QLineEdit, QComboBox, QSpinBox {
+                QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {
                     background-color: #18181b;
                     border: 1px solid #3f3f46;
                     border-radius: 6px;
@@ -511,7 +511,7 @@ class SettingsWindow(QtWidgets.QWidget):
                     color: #ffffff;
                     font-size: 13px;
                 }
-                QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+                QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
                     border: 1px solid #ffffff;
                 }
                 QComboBox::drop-down {
@@ -631,6 +631,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.trans_combo.addItem("🇫🇷 Francês (Français)", "fr")
         self.trans_combo.addItem("🇩🇪 Alemão (Deutsch)", "de")
         self.trans_combo.addItem("🇮🇹 Italiano (Italiano)", "it")
+        self.trans_combo.addItem("🎭 Modo Livre / Personagens (Prompt Personalizado)", "custom")
 
         current_trans = self.config.get("translation_target", "original")
         for i in range(self.trans_combo.count()):
@@ -639,7 +640,7 @@ class SettingsWindow(QtWidgets.QWidget):
                 break
 
         trans_hint = QtWidgets.QLabel(
-            "Sua fala será automaticamente traduzida para o idioma selecionado com tom estritamente natural e coloquial de um falante nativo."
+            "Sua fala será automaticamente traduzida ou reescrita conforme o idioma ou personagem selecionado."
         )
         trans_hint.setObjectName("HintLabel")
         trans_hint.setWordWrap(True)
@@ -648,6 +649,48 @@ class SettingsWindow(QtWidgets.QWidget):
         trans_layout.addWidget(self.trans_combo)
         trans_layout.addWidget(trans_hint)
         main_layout.addLayout(trans_layout)
+
+        # 2.1 Card Dinâmico do Modo Livre / Personagens
+        self.custom_prompt_box = QtWidgets.QWidget()
+        self.custom_prompt_box.setObjectName("CardBox")
+        custom_box_layout = QtWidgets.QVBoxLayout(self.custom_prompt_box)
+        custom_box_layout.setContentsMargins(14, 12, 14, 12)
+        custom_box_layout.setSpacing(8)
+
+        custom_title = QtWidgets.QLabel("Personalidade / Prompt do Modo Livre:")
+        custom_title.setObjectName("CardTitle")
+
+        self.preset_combo = QtWidgets.QComboBox()
+        self.preset_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.preset_combo.addItem("🎮 Jogador de Dota 2 estressado", "dota")
+        self.preset_combo.addItem("🏴‍☠️ Linguagem Pirata", "pirata")
+        self.preset_combo.addItem("💅 Adolescente empolgada (Bestie)", "adolescente")
+        self.preset_combo.addItem("💼 Corporativo Formal", "corporativo")
+        self.preset_combo.addItem("✍️ Prompt Livre / Customizado", "livre")
+
+        saved_preset = self.config.get("custom_preset", "dota")
+        for i in range(self.preset_combo.count()):
+            if self.preset_combo.itemData(i) == saved_preset:
+                self.preset_combo.setCurrentIndex(i)
+                break
+
+        self.custom_prompt_edit = QtWidgets.QPlainTextEdit()
+        self.custom_prompt_edit.setPlaceholderText("Escreva a instrução de como o texto ditado deve ser reescrito...")
+        self.custom_prompt_edit.setFixedHeight(95)
+        saved_prompt = self.config.get("custom_prompt", config_manager.PRESET_PROMPTS.get("dota", ""))
+        self.custom_prompt_edit.setPlainText(saved_prompt)
+
+        preset_hint = QtWidgets.QLabel("Escolha uma personalidade pronta ou edite a instrução livremente. O texto ditado no F8 será adaptado conforme esse comando.")
+        preset_hint.setObjectName("HintLabel")
+        preset_hint.setWordWrap(True)
+
+        custom_box_layout.addWidget(custom_title)
+        custom_box_layout.addWidget(self.preset_combo)
+        custom_box_layout.addWidget(self.custom_prompt_edit)
+        custom_box_layout.addWidget(preset_hint)
+
+        self.custom_prompt_box.setVisible(current_trans == "custom")
+        main_layout.addWidget(self.custom_prompt_box)
 
         # 3. Modo de Funcionamento (Opção 1 Única e Padrão)
         mode_card = QtWidgets.QWidget()
@@ -761,13 +804,29 @@ class SettingsWindow(QtWidgets.QWidget):
 
         # Conexão de sinais
         self.engine_combo.currentIndexChanged.connect(self._on_field_changed)
-        self.trans_combo.currentIndexChanged.connect(self._on_field_changed)
+        self.trans_combo.currentIndexChanged.connect(self._on_trans_combo_changed)
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_combo_changed)
+        self.custom_prompt_edit.textChanged.connect(self._on_field_changed)
         self.mic_combo.currentIndexChanged.connect(self._on_field_changed)
         self.hud_spin.valueChanged.connect(self._on_field_changed)
         self.autostart_switch.toggled.connect(self._on_field_changed)
 
         scroll_area.setWidget(content_widget)
         root_layout.addWidget(scroll_area)
+
+    def _on_trans_combo_changed(self):
+        is_custom = self.trans_combo.currentData() == "custom"
+        self.custom_prompt_box.setVisible(is_custom)
+        self._on_field_changed()
+
+    def _on_preset_combo_changed(self):
+        preset_key = self.preset_combo.currentData()
+        if preset_key in config_manager.PRESET_PROMPTS and preset_key != "livre":
+            prompt = config_manager.PRESET_PROMPTS[preset_key]
+            self.custom_prompt_edit.blockSignals(True)
+            self.custom_prompt_edit.setPlainText(prompt)
+            self.custom_prompt_edit.blockSignals(False)
+        self._on_field_changed()
 
     def _on_theme_switch_toggled(self, is_dark: bool):
         new_theme = "dark" if is_dark else "light"
@@ -784,6 +843,7 @@ class SettingsWindow(QtWidgets.QWidget):
                 self.trans_combo.setCurrentIndex(i)
                 break
         self.trans_combo.blockSignals(False)
+        self.custom_prompt_box.setVisible(target == "custom")
         self.config["translation_target"] = target
 
     def _populate_microphones(self):
@@ -826,6 +886,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.config["theme"] = "dark" if self.theme_switch.isChecked() else "light"
         self.config["engine"] = self.engine_combo.currentData()
         self.config["translation_target"] = self.trans_combo.currentData()
+        self.config["custom_preset"] = self.preset_combo.currentData()
+        self.config["custom_prompt"] = self.custom_prompt_edit.toPlainText().strip()
         self.config["microphone_index"] = self.mic_combo.currentData()
         self.config["hud_bottom_offset"] = self.hud_spin.value()
         self.config["autostart"] = self.autostart_switch.isChecked()

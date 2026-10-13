@@ -164,8 +164,12 @@ class FloatingHUD(QtWidgets.QWidget):
     def set_processing(self):
         self._notice_timer.stop()
         self.current_state = "processing"
-        is_translating = self.translation_target not in ("original", "none", "")
-        self.label.setText("Traduzindo..." if is_translating else "Digitando...")
+        if self.translation_target == "custom":
+            self.label.setText("Estilizando...")
+        elif self.translation_target not in ("original", "none", ""):
+            self.label.setText("Traduzindo...")
+        else:
+            self.label.setText("Digitando...")
         self.dot.setFixedSize(14, 14)
         dot_color = "#2563eb" if self.theme == "light" else "#3b82f6"
         self.dot.setStyleSheet(f"border-radius: 7px; background-color: {dot_color};")

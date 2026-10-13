@@ -167,7 +167,8 @@ class DictationApp(QtCore.QObject):
             ("es", "🇪🇸 Espanhol (ES)"),
             ("fr", "🇫🇷 Francês (FR)"),
             ("de", "🇩🇪 Alemão (DE)"),
-            ("it", "🇮🇹 Italiano (IT)")
+            ("it", "🇮🇹 Italiano (IT)"),
+            ("custom", "🎭 Modo Livre / Personagens")
         ]
 
         current_target = self.config.get("translation_target", "original")
@@ -413,7 +414,11 @@ class DictationApp(QtCore.QObject):
                 return
 
             target_lang = self.config.get("translation_target", "original")
-            text = self.engine.transcribe(audio_bytes, target_lang=target_lang)
+            if target_lang == "custom":
+                custom_prompt = self.config.get("custom_prompt", "")
+                text = self.engine.transcribe(audio_bytes, target_lang=target_lang, custom_prompt=custom_prompt)
+            else:
+                text = self.engine.transcribe(audio_bytes, target_lang=target_lang)
             if text:
                 print(f"[Dita-eu] Texto transcrito ({target_lang}): '{text}'")
                 inject_text(text, restore_clipboard=True)

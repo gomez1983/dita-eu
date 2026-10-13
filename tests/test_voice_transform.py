@@ -245,6 +245,22 @@ class VoiceTransformTests(unittest.TestCase):
         transform.assert_not_called()
         self.assertEqual(self.app._dictation_jobs, 0)
 
+    def test_custom_mode_dictation_passes_custom_prompt(self):
+        self.app.config["translation_target"] = "custom"
+        self.app.config["custom_prompt"] = "Reescreva como pirata"
+        self.app._dictation_jobs = 1
+        self.app.engine.transcribe.return_value = "Ahoy marujo"
+        with patch.object(main, "inject_text") as inject, \
+                patch.object(main, "inject_transformed_text") as transform, \
+                patch.object(main.QtCore.QMetaObject, "invokeMethod"):
+            self.app._process_and_inject()
+        self.app.engine.transcribe.assert_called_once_with(
+            b"a" * 5000, target_lang="custom", custom_prompt="Reescreva como pirata"
+        )
+        inject.assert_called_once_with("Ahoy marujo", restore_clipboard=True)
+        transform.assert_not_called()
+        self.assertEqual(self.app._dictation_jobs, 0)
+
     def test_application_initialization_connects_existing_hud_methods(self):
         with patch.object(config_manager, "load_config", return_value=config_manager.DEFAULT_CONFIG.copy()), \
                 patch.object(main, "AudioRecorder"), \

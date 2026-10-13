@@ -117,6 +117,48 @@ class GroqTranscriber:
 
         return ""
 
+    def apply_custom_style(self, text: str, custom_prompt: str) -> str:
+        """Aplica prompt customizado de personalidade/estilo sobre o texto falado via Groq"""
+        if not text or not custom_prompt or not self.api_key:
+            return text or ""
+
+        system_instruction = (
+            "Você é um especialista em reescrita e estilização imediata de texto falado.\n"
+            f"Instrução de Estilização: {custom_prompt}\n\n"
+            "Diretrizes Rígidas:\n"
+            "1. Transforme o texto fornecido pelo usuário incorporando rigorosamente o estilo solicitado.\n"
+            "2. Retorne APENAS E EXCLUSIVAMENTE o texto final reescrito, sem introduções, sem notas, sem explicações e sem aspas no início ou fim."
+        )
+
+        models_to_try = ["llama-3.3-70b-versatile", "qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+        for model in models_to_try:
+            try:
+                response = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_instruction},
+                            {"role": "user", "content": text}
+                        ],
+                        "temperature": 0.4
+                    },
+                    timeout=6
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        res = choices[0].get("message", {}).get("content", "").strip()
+                        if res:
+                            return res
+            except Exception as e:
+                print(f"[GroqTranscriber CustomStyle {model}] Erro: {e}")
+                continue
+
+        return text
+
     def transform_text(self, original_text: str, instruction_audio_bytes: bytes) -> str:
         """Transcreve a ordem e transforma a seleção, somente pela Groq e em RAM."""
         if not original_text or not original_text.strip() or not instruction_audio_bytes or not self.api_key:
@@ -266,6 +308,39 @@ class GeminiTranscriber:
             print(f"[GeminiTranscriber Translation] Erro ou timeout na chamada Gemini: {e}")
             return ""
 
+    def apply_custom_style(self, text: str, custom_prompt: str) -> str:
+        """Aplica prompt customizado de personalidade/estilo sobre o texto falado via Gemini"""
+        if not text or not custom_prompt or not self.client:
+            return text or ""
+
+        system_instruction = (
+            "Você é um especialista em reescrita e estilização imediata de texto falado.\n"
+            f"Instrução de Estilização: {custom_prompt}\n\n"
+            "Diretrizes Rígidas:\n"
+            "1. Transforme o texto fornecido pelo usuário incorporando rigorosamente o estilo solicitado.\n"
+            "2. Retorne APENAS E EXCLUSIVAMENTE o texto final reescrito, sem introduções, sem notas, sem explicações e sem aspas no início ou fim."
+        )
+
+        def _call():
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=[text],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.4
+                )
+            )
+            return (response.text or "").strip()
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_call)
+                res = fut.result(timeout=8)
+                return res if res else text
+        except Exception as e:
+            print(f"[GeminiTranscriber CustomStyle] Erro ou timeout: {e}")
+            return text
+
     def transform_text(self, original_text: str, instruction_audio_bytes: bytes) -> str:
         """Duas chamadas Gemini em RAM, com prazo total independente do ditado."""
         if not original_text or not original_text.strip() or not instruction_audio_bytes or not self.client:
@@ -336,7 +411,7 @@ class TranscriptionEngine:
             return self.gemini_engine.transform_text(original_text, instruction_audio_bytes)
         return ""
 
-    def transcribe(self, audio_bytes: bytes, target_lang: str = "original") -> str:
+    def transcribe(self, audio_bytes: bytes, target_lang: str = "original", custom_prompt: str = "") -> str:
         target_lang = (target_lang or "original").lower()
 
         # 1. Transcrição do áudio em texto (prioriza motor selecionado)
@@ -357,11 +432,26 @@ class TranscriptionEngine:
         if not raw_text:
             return ""
 
-        # 2. Se for modo normal (sem tradução), retorna o texto original transcrito instantaneamente
+        # 2. Modo Customizado / Personagem / Prompt Livre
+        if target_lang in ("custom", "livre") or (custom_prompt and target_lang == "custom"):
+            styled = ""
+            if self.engine_type == "gemini":
+                if self.gemini_engine.client:
+                    styled = self.gemini_engine.apply_custom_style(raw_text, custom_prompt)
+                if not styled and self.groq_engine.api_key:
+                    styled = self.groq_engine.apply_custom_style(raw_text, custom_prompt)
+            else:
+                if self.groq_engine.api_key:
+                    styled = self.groq_engine.apply_custom_style(raw_text, custom_prompt)
+                if not styled and self.gemini_engine.client:
+                    styled = self.gemini_engine.apply_custom_style(raw_text, custom_prompt)
+            return styled if styled else raw_text
+
+        # 3. Se for modo normal (sem tradução), retorna o texto original transcrito instantaneamente
         if target_lang in ("original", "none", ""):
             return raw_text
 
-        # 3. Modo Tradução Coloquial em Alta Velocidade (prioriza motor selecionado)
+        # 4. Modo Tradução Coloquial em Alta Velocidade (prioriza motor selecionado)
         translated = ""
         if self.engine_type == "gemini":
             if self.gemini_engine.client:
