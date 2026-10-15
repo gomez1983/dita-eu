@@ -280,8 +280,36 @@ class VoiceTransformTests(unittest.TestCase):
         prompt = config_manager.PRESET_PROMPTS["email_prytter"]
         self.assertIn("Moove", prompt)
         self.assertIn("cliente e prestador de serviço", prompt)
+        self.assertIn("Não precisa de saudação nem encerramento", prompt)
 
+    def test_all_new_funny_presets_exist_in_config_manager(self):
+        for key in ["coach_quantico", "tiozao_churrasco", "trailer_cinema"]:
+            self.assertIn(key, config_manager.PRESET_PROMPTS)
+            self.assertTrue(len(config_manager.PRESET_PROMPTS[key]) > 20)
+
+    def test_get_preset_prompt_returns_default_and_custom_override(self):
+        config = {"custom_prompts": {"dota": "Dota modificado"}}
+        self.assertEqual(config_manager.get_preset_prompt(config, "dota"), "Dota modificado")
+        self.assertEqual(
+            config_manager.get_preset_prompt(config, "coach_quantico"),
+            config_manager.PRESET_PROMPTS["coach_quantico"]
+        )
+        self.assertEqual(config_manager.get_preset_prompt(config, "livre"), "")
+
+    def test_settings_window_preset_buttons_and_reset(self):
+        with patch.object(main, "AudioRecorder"), \
+                patch.object(main, "TranscriptionEngine"):
+            window = main.SettingsWindow(config_manager.DEFAULT_CONFIG.copy())
+        self.assertTrue(hasattr(window, "btn_save_prompt"))
+        self.assertTrue(hasattr(window, "btn_reset_prompt"))
+        combo_keys = [window.preset_combo.itemData(i) for i in range(window.preset_combo.count())]
+        self.assertIn("email_prytter", combo_keys)
+        self.assertIn("coach_quantico", combo_keys)
+        self.assertIn("tiozao_churrasco", combo_keys)
+        self.assertIn("trailer_cinema", combo_keys)
+        window.close()
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -662,14 +662,17 @@ class SettingsWindow(QtWidgets.QWidget):
 
         self.preset_combo = QtWidgets.QComboBox()
         self.preset_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.preset_combo.addItem("✉️ Email Prytter", "email_prytter")
         self.preset_combo.addItem("🎮 Jogador de Dota 2 estressado", "dota")
         self.preset_combo.addItem("🏴‍☠️ Linguagem Pirata", "pirata")
         self.preset_combo.addItem("💅 Adolescente empolgada (Bestie)", "adolescente")
         self.preset_combo.addItem("💼 Corporativo Formal", "corporativo")
-        self.preset_combo.addItem("✉️ Email Prytter", "email_prytter")
+        self.preset_combo.addItem("🧘 Coach Quântico", "coach_quantico")
+        self.preset_combo.addItem("🥩 Tiozão do Churrasco", "tiozao_churrasco")
+        self.preset_combo.addItem("🎬 Trailer de Cinema Anos 90", "trailer_cinema")
         self.preset_combo.addItem("✍️ Prompt Livre / Customizado", "livre")
 
-        saved_preset = self.config.get("custom_preset", "dota")
+        saved_preset = self.config.get("custom_preset", "email_prytter")
         for i in range(self.preset_combo.count()):
             if self.preset_combo.itemData(i) == saved_preset:
                 self.preset_combo.setCurrentIndex(i)
@@ -678,8 +681,23 @@ class SettingsWindow(QtWidgets.QWidget):
         self.custom_prompt_edit = QtWidgets.QPlainTextEdit()
         self.custom_prompt_edit.setPlaceholderText("Escreva a instrução de como o texto ditado deve ser reescrito...")
         self.custom_prompt_edit.setFixedHeight(95)
-        saved_prompt = self.config.get("custom_prompt", config_manager.PRESET_PROMPTS.get("dota", ""))
+        saved_prompt = config_manager.get_preset_prompt(self.config, saved_preset)
         self.custom_prompt_edit.setPlainText(saved_prompt)
+
+        # Botões de Ação do Prompt: Salvar Edição e Restaurar Padrão de Fábrica
+        prompt_actions_layout = QtWidgets.QHBoxLayout()
+        prompt_actions_layout.setSpacing(8)
+        self.btn_save_prompt = QtWidgets.QPushButton("Salvar Prompt")
+        self.btn_save_prompt.setObjectName("SecondaryBtn")
+        self.btn_save_prompt.clicked.connect(self._save_prompt_clicked)
+
+        self.btn_reset_prompt = QtWidgets.QPushButton("Restaurar Padrão")
+        self.btn_reset_prompt.setObjectName("SecondaryBtn")
+        self.btn_reset_prompt.clicked.connect(self._reset_prompt_clicked)
+
+        prompt_actions_layout.addWidget(self.btn_save_prompt)
+        prompt_actions_layout.addWidget(self.btn_reset_prompt)
+        prompt_actions_layout.addStretch()
 
         preset_hint = QtWidgets.QLabel("Escolha uma personalidade pronta ou edite a instrução livremente. O texto ditado no F8 será adaptado conforme esse comando.")
         preset_hint.setObjectName("HintLabel")
@@ -688,6 +706,7 @@ class SettingsWindow(QtWidgets.QWidget):
         custom_box_layout.addWidget(custom_title)
         custom_box_layout.addWidget(self.preset_combo)
         custom_box_layout.addWidget(self.custom_prompt_edit)
+        custom_box_layout.addLayout(prompt_actions_layout)
         custom_box_layout.addWidget(preset_hint)
 
         self.custom_prompt_box.setVisible(current_trans == "custom")
@@ -822,11 +841,12 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _on_preset_combo_changed(self):
         preset_key = self.preset_combo.currentData()
-        if preset_key in config_manager.PRESET_PROMPTS and preset_key != "livre":
-            prompt = config_manager.PRESET_PROMPTS[preset_key]
-            self.custom_prompt_edit.blockSignals(True)
-            self.custom_prompt_edit.setPlainText(prompt)
-            self.custom_prompt_edit.blockSignals(False)
+        prompt = config_manager.get_preset_prompt(self.config, preset_key)
+        self.custom_prompt_edit.blockSignals(True)
+        self.custom_prompt_edit.setPlainText(prompt)
+        self.custom_prompt_edit.blockSignals(False)
+        self.config["custom_preset"] = preset_key
+        self.config["custom_prompt"] = prompt
         self._on_field_changed()
 
     def _on_theme_switch_toggled(self, is_dark: bool):
@@ -883,12 +903,45 @@ class SettingsWindow(QtWidgets.QWidget):
     def _manual_save_clicked(self):
         self._save_settings(feedback=True)
 
+    def _save_prompt_clicked(self):
+        preset_key = self.preset_combo.currentData()
+        prompt_text = self.custom_prompt_edit.toPlainText().strip()
+        if "custom_prompts" not in self.config:
+            self.config["custom_prompts"] = {}
+        self.config["custom_prompts"][preset_key] = prompt_text
+        self.config["custom_prompt"] = prompt_text
+        self.config["custom_preset"] = preset_key
+        config_manager.save_config(self.config)
+        self.config_saved.emit(self.config)
+        self.btn_save_prompt.setText("✓ Prompt Salvo!")
+        QtCore.QTimer.singleShot(1500, lambda: self.btn_save_prompt.setText("Salvar Prompt"))
+
+    def _reset_prompt_clicked(self):
+        preset_key = self.preset_combo.currentData()
+        default_prompt = config_manager.PRESET_PROMPTS.get(preset_key, "")
+        if "custom_prompts" in self.config and preset_key in self.config["custom_prompts"]:
+            del self.config["custom_prompts"][preset_key]
+        self.custom_prompt_edit.blockSignals(True)
+        self.custom_prompt_edit.setPlainText(default_prompt)
+        self.custom_prompt_edit.blockSignals(False)
+        self.config["custom_prompt"] = default_prompt
+        self.config["custom_preset"] = preset_key
+        config_manager.save_config(self.config)
+        self.config_saved.emit(self.config)
+        self.btn_reset_prompt.setText("✓ Padrão Restaurado!")
+        QtCore.QTimer.singleShot(1500, lambda: self.btn_reset_prompt.setText("Restaurar Padrão"))
+
     def _save_settings(self, feedback: bool = False):
         self.config["theme"] = "dark" if self.theme_switch.isChecked() else "light"
         self.config["engine"] = self.engine_combo.currentData()
         self.config["translation_target"] = self.trans_combo.currentData()
-        self.config["custom_preset"] = self.preset_combo.currentData()
-        self.config["custom_prompt"] = self.custom_prompt_edit.toPlainText().strip()
+        preset_key = self.preset_combo.currentData()
+        self.config["custom_preset"] = preset_key
+        prompt_text = self.custom_prompt_edit.toPlainText().strip()
+        self.config["custom_prompt"] = prompt_text
+        if "custom_prompts" not in self.config:
+            self.config["custom_prompts"] = {}
+        self.config["custom_prompts"][preset_key] = prompt_text
         self.config["microphone_index"] = self.mic_combo.currentData()
         self.config["hud_bottom_offset"] = self.hud_spin.value()
         self.config["autostart"] = self.autostart_switch.isChecked()

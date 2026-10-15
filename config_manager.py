@@ -41,8 +41,25 @@ PRESET_PROMPTS = {
     ),
     "email_prytter": (
         "Reescreva mantendo as informações, mas deixe de forma coloquial, sem gírias e amistosa. "
-        "Não use jargões nem emojis. Tom amistoso, porém profissional. Sempre como se fosse uma troca de "
-        "emails entre cliente e prestador de serviço. Substituir \"movie\" por \"Moove\", pois é o nome da empresa."
+        "Não use jargões nem emojis. Tom amistoso, sempre como se fosse uma troca de emails entre cliente "
+        "e prestador de serviço com bastante intimidade. Substituir \"movie\" por \"Moove\", pois é o nome da empresa. "
+        "Não precisa de saudação nem encerramento. Modificar informações que possam ser ofensivas ou atribuir falsas informações pessoais."
+    ),
+    "coach_quantico": (
+        "Reescreva o texto no tom insuportável e pedante de um coach quântico de prosperidade: encare qualquer frase "
+        "como um bloqueio energético ou oportunidade de saltar para a quinta dimensão. Use jargões caricatos "
+        "('reprogramação celular', 'frequência em Hertz', 'mindset de abundância', 'ressonância', 'cocriação no vácuo'), "
+        "gratidão forçada e imperativos para a pessoa 'virar a chave'."
+    ),
+    "tiozao_churrasco": (
+        "Reescreva a mensagem com a personalidade inconfundível do tiozão do churrasco de domingo: use piadas ruins de "
+        "duplo sentido, trocadilhos infames (estilo 'é pavê ou pacumê'), referências a carro velho pegando no tranco, "
+        "cerveja gelada e conselhos caseiros duvidosos. Trate o interlocutor como 'campeão', 'fera', 'chefe' ou 'meu patrão'."
+    ),
+    "trailer_cinema": (
+        "Reescreva o texto como o narrador de trailer de filme de ação épico dos anos 90: comece obrigatoriamente com a "
+        "fórmula 'Em um mundo onde...' ou equivalente dramático. Narre qualquer acontecimento trivial como uma catástrofe global "
+        "iminente, repleta de explosões mentais, contagens regressivas cruciais e destinos selados, em tom solene, grave e cinematográfico."
     ),
     "livre": ""
 }
@@ -59,9 +76,22 @@ DEFAULT_CONFIG = {
     "theme": "dark",
     "autostart": False,
     "translation_target": "original",  # "original", "en", "es", "fr", "de", "it", "custom"
-    "custom_preset": "dota",
-    "custom_prompt": PRESET_PROMPTS["dota"]
+    "custom_preset": "email_prytter",
+    "custom_prompt": PRESET_PROMPTS["email_prytter"],
+    "custom_prompts": {}
 }
+
+def get_preset_prompt(config: dict, preset_key: str) -> str:
+    """Retorna o prompt para o preset informado, respeitando edições customizadas salvas pelo usuário."""
+    if not preset_key:
+        return ""
+    custom_map = config.get("custom_prompts", {})
+    if preset_key in custom_map:
+        return custom_map[preset_key]
+    if preset_key == "livre":
+        return config.get("custom_prompt", "")
+    return PRESET_PROMPTS.get(preset_key, "")
+
 
 def load_config() -> dict:
     if os.path.exists(ENV_FILE):
