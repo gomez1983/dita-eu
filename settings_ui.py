@@ -666,6 +666,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.preset_combo.addItem("🏴‍☠️ Linguagem Pirata", "pirata")
         self.preset_combo.addItem("💅 Adolescente empolgada (Bestie)", "adolescente")
         self.preset_combo.addItem("💼 Corporativo Formal", "corporativo")
+        self.preset_combo.addItem("✉️ Email Prytter", "email_prytter")
         self.preset_combo.addItem("✍️ Prompt Livre / Customizado", "livre")
 
         saved_preset = self.config.get("custom_preset", "dota")

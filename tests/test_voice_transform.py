@@ -275,6 +275,13 @@ class VoiceTransformTests(unittest.TestCase):
         app.hud.close()
         self.assertIsNone(app._transform_session)
 
+    def test_email_prytter_preset_exists_in_config_manager(self):
+        self.assertIn("email_prytter", config_manager.PRESET_PROMPTS)
+        prompt = config_manager.PRESET_PROMPTS["email_prytter"]
+        self.assertIn("Moove", prompt)
+        self.assertIn("cliente e prestador de serviço", prompt)
+
+
 
 if __name__ == "__main__":
     unittest.main()

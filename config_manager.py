@@ -39,6 +39,11 @@ PRESET_PROMPTS = {
         "Reescreva o texto no padrão corporativo executivo de alto escalão: linguagem polida, impessoal, assertiva, "
         "orientada a resultados e alinhamento estratégico, sem gírias ou informalidades."
     ),
+    "email_prytter": (
+        "Reescreva mantendo as informações, mas deixe de forma coloquial, sem gírias e amistosa. "
+        "Não use jargões nem emojis. Tom amistoso, porém profissional. Sempre como se fosse uma troca de "
+        "emails entre cliente e prestador de serviço. Substituir \"movie\" por \"Moove\", pois é o nome da empresa."
+    ),
     "livre": ""
 }
 
