@@ -19,3 +19,4 @@ Como assistente de IA trabalhando no projeto **Dita-eu**, você DEVE seguir rigo
 
 ## 4. Concorrência com Abas Abertas no Editor
 - Quando o usuário estiver com abas abertas no IDE, arquivos editados em disco podem ser sobrescritos pelo buffer do editor se a janela perder/ganhar foco. Tenha cautela ao instruir ou aplicar edits simultâneos em momentos de build.
+
