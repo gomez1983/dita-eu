@@ -249,6 +249,20 @@ class DictationApp(QtCore.QObject):
         )
         self.engine.preload_local()
 
+        # Limpeza atômica do estado de atalhos e cancelamento de sessões pendentes
+        with self._lock:
+            self._currently_pressed_keys.clear()
+            self._transform_latched_keys = frozenset()
+            if self._transform_session is not None:
+                self._transform_session.cancelled.set()
+                self._transform_session.released.set()
+                self._transform_session = None
+
+        if self.keyboard_listener is not None:
+            self.keyboard_listener.suppress_transform_event = False
+            self.keyboard_listener.transform_pressed_vks.clear()
+            self.keyboard_listener.transform_suppressed_vks.clear()
+
         self._update_tray_tooltip()
         keys_str = " + ".join([k.upper() for k in self.config.get("trigger_keys", ["F8"])])
         print(f"[Dita-eu] Configuração aplicada: Atalho [{keys_str}], Motor [{self.config.get('engine')}], Tema [{self.config.get('theme')}], Tradução [{target_lang}]")
