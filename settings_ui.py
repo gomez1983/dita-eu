@@ -5,12 +5,15 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from pynput import keyboard
 
 import config_manager
+import local_transcriber
+from ui_components import ComboBox, LineIcon, ReadyVisual, ThemeSelector, palette, stylesheet
 
 class ToggleSwitch(QtWidgets.QAbstractButton):
     """Toggle switch moderno e minimalista estilo iOS / Windows 11 Settings"""
     def __init__(self, parent=None, checked=False, theme: str = "dark"):
         super().__init__(parent)
         self.setCheckable(True)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setChecked(checked)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(46, 24)
@@ -50,7 +53,7 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
 
         # Trilha arredondada
         if self._offset > 0.0:
-            track_color = QtGui.QColor("#2563eb")  # Azul vibrante de ativação
+            track_color = QtGui.QColor(palette(self.theme)["bright"])  # Azul vibrante de ativação
         else:
             track_color = QtGui.QColor("#3f3f46") if self.theme == "dark" else QtGui.QColor("#cbd5e1")
 
@@ -116,100 +119,7 @@ class KeyRecorderDialog(QtWidgets.QDialog):
         self._start_listening()
 
     def _apply_theme(self):
-        if self.theme == "light":
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #f8fafc;
-                    border: 1px solid #cbd5e1;
-                }
-                QLabel#DialogInstruction {
-                    font-size: 13px;
-                    color: #475569;
-                    font-family: 'Segoe UI', sans-serif;
-                }
-                QLabel#ComboDisplay {
-                    font-size: 18px;
-                    font-weight: bold;
-                    color: #0f172a;
-                    background-color: #ffffff;
-                    border: 1px dashed #94a3b8;
-                    border-radius: 8px;
-                    padding: 12px;
-                }
-                QPushButton#PrimaryBtn {
-                    background-color: #0f172a;
-                    color: #ffffff;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 8px 16px;
-                    font-weight: 600;
-                }
-                QPushButton#PrimaryBtn:hover {
-                    background-color: #1e293b;
-                }
-                QPushButton#PrimaryBtn:disabled {
-                    background-color: #e2e8f0;
-                    color: #94a3b8;
-                }
-                QPushButton#SecondaryBtn {
-                    background-color: #f1f5f9;
-                    color: #0f172a;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 6px;
-                    padding: 8px 16px;
-                    font-weight: 600;
-                }
-                QPushButton#SecondaryBtn:hover {
-                    background-color: #e2e8f0;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #121214;
-                    border: 1px solid #27272a;
-                }
-                QLabel#DialogInstruction {
-                    font-size: 13px;
-                    color: #a1a1aa;
-                    font-family: 'Segoe UI', sans-serif;
-                }
-                QLabel#ComboDisplay {
-                    font-size: 18px;
-                    font-weight: bold;
-                    color: #ffffff;
-                    background-color: #18181b;
-                    border: 1px dashed #52525b;
-                    border-radius: 8px;
-                    padding: 12px;
-                }
-                QPushButton#PrimaryBtn {
-                    background-color: #ffffff;
-                    color: #09090b;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 8px 16px;
-                    font-weight: 600;
-                }
-                QPushButton#PrimaryBtn:hover {
-                    background-color: #e4e4e7;
-                }
-                QPushButton#PrimaryBtn:disabled {
-                    background-color: #27272a;
-                    color: #71717a;
-                }
-                QPushButton#SecondaryBtn {
-                    background-color: #27272a;
-                    color: #ffffff;
-                    border: 1px solid #3f3f46;
-                    border-radius: 6px;
-                    padding: 8px 16px;
-                    font-weight: 600;
-                }
-                QPushButton#SecondaryBtn:hover {
-                    background-color: #3f3f46;
-                }
-            """)
+        self.setStyleSheet(stylesheet(self.theme))
 
     def _normalize_key(self, key) -> str:
         if isinstance(key, keyboard.Key):
@@ -275,6 +185,23 @@ class KeyRecorderDialog(QtWidgets.QDialog):
         super().closeEvent(event)
 
 
+class _ModelDownloadThread(QtCore.QThread):
+    """Baixa o modelo offline fora da thread da interface."""
+    done = QtCore.pyqtSignal(bool, str)
+
+    def __init__(self, size: str, parent=None):
+        super().__init__(parent)
+        self.size = size
+
+    def run(self):
+        try:
+            local_transcriber.download_model(self.size)
+            self.done.emit(local_transcriber.is_model_downloaded(self.size), self.size)
+        except Exception as e:
+            print(f"[Dita-eu] Falha ao baixar o modelo offline: {type(e).__name__}")
+            self.done.emit(False, self.size)
+
+
 class SettingsWindow(QtWidgets.QWidget):
     config_saved = QtCore.pyqtSignal(dict)
 
@@ -286,8 +213,10 @@ class SettingsWindow(QtWidgets.QWidget):
         self.current_theme = self.config.get("theme", "dark")
 
         self.setWindowTitle("Dita-eu — Configurações")
-        self.setMinimumSize(520, 620)
-        self.resize(550, 710)
+        self.setObjectName("SettingsRoot")
+        self.setMinimumSize(600, 570)
+        area = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        self.resize(min(740, area.width()), min(850, area.height() - 40))
 
         self._setup_ui()
         self._apply_theme(self.current_theme)
@@ -306,351 +235,146 @@ class SettingsWindow(QtWidgets.QWidget):
     def _apply_theme(self, theme: str):
         self.current_theme = theme
         self._update_logo()
+        self.theme_switch.set_theme(theme)
+        self.theme_switch.blockSignals(True)
+        self.theme_switch.setChecked(theme == "dark")
+        self.theme_switch.blockSignals(False)
+        self.autostart_switch.set_theme(theme)
+        self.setStyleSheet(stylesheet(theme))
+        for icon in self.findChildren(LineIcon):
+            icon.theme = theme
+            icon.update()
+        self.ready_visual.theme = theme
+        self.ready_visual.update()
 
-        if hasattr(self, "theme_switch"):
-            self.theme_switch.set_theme(theme)
-            self.theme_switch.blockSignals(True)
-            self.theme_switch.setChecked(theme == "dark")
-            self.theme_switch.blockSignals(False)
-            self.theme_label.setText("🌙 Modo Escuro" if theme == "dark" else "☀️ Modo Claro")
+    @staticmethod
+    def _text(text, name="CardTitle"):
+        label = QtWidgets.QLabel(text)
+        label.setObjectName(name)
+        label.setWordWrap(True)
+        return label
 
-        if hasattr(self, "autostart_switch"):
-            self.autostart_switch.set_theme(theme)
+    def _card(self, parent_layout):
+        card = QtWidgets.QWidget()
+        card.setObjectName("CardBox")
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setContentsMargins(16, 5, 16, 5)
+        layout.setSpacing(0)
+        parent_layout.addWidget(card)
+        return layout
 
-        if theme == "light":
-            self.setStyleSheet("""
-                QWidget {
-                    background-color: #f8fafc;
-                    color: #0f172a;
-                    font-family: 'Segoe UI', -apple-system, sans-serif;
-                }
-                QScrollArea {
-                    border: none;
-                    background-color: transparent;
-                }
-                QScrollBar:vertical {
-                    background: #f1f5f9;
-                    width: 8px;
-                    border-radius: 4px;
-                }
-                QScrollBar::handle:vertical {
-                    background: #cbd5e1;
-                    border-radius: 4px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background: #94a3b8;
-                }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    height: 0px;
-                }
-                QLabel {
-                    font-size: 13px;
-                    color: #1e293b;
-                    font-weight: 600;
-                }
-                QLabel#TitleLabel {
-                    font-size: 20px;
-                    font-weight: bold;
-                    color: #0f172a;
-                }
-                QLabel#SubtitleLabel {
-                    font-size: 12px;
-                    color: #475569;
-                    font-weight: 400;
-                }
-                QLabel#CardTitle {
-                    font-size: 13px;
-                    font-weight: bold;
-                    color: #0f172a;
-                }
-                QLabel#CardBadge {
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #047857;
-                }
-                QLabel#CardDesc {
-                    font-size: 12px;
-                    color: #334155;
-                    font-weight: 400;
-                    line-height: 1.4;
-                }
-                QLabel#HintLabel {
-                    font-size: 11px;
-                    color: #475569;
-                    font-weight: 400;
-                }
-                QWidget#CardBox {
-                    background-color: #ffffff;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 8px;
-                    padding: 12px;
-                }
-                QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {
-                    background-color: #ffffff;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 6px;
-                    padding: 9px 12px;
-                    color: #0f172a;
-                    font-size: 13px;
-                    font-weight: 500;
-                }
-                QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
-                    border: 1px solid #0f172a;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    padding-right: 8px;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #ffffff;
-                    color: #0f172a;
-                    selection-background-color: #e2e8f0;
-                    selection-color: #0f172a;
-                    border: 1px solid #cbd5e1;
-                    outline: none;
-                }
-                QPushButton {
-                    background-color: #0f172a;
-                    color: #ffffff;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 11px 20px;
-                    font-weight: bold;
-                    font-size: 14px;
-                }
-                QPushButton:hover {
-                    background-color: #1e293b;
-                }
-                QPushButton#SecondaryBtn {
-                    background-color: #f1f5f9;
-                    color: #0f172a;
-                    border: 1px solid #cbd5e1;
-                    padding: 9px 16px;
-                    font-size: 13px;
-                    font-weight: 600;
-                }
-                QPushButton#SecondaryBtn:hover {
-                    background-color: #e2e8f0;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QWidget {
-                    background-color: #09090b;
-                    color: #f4f4f5;
-                    font-family: 'Segoe UI', -apple-system, sans-serif;
-                }
-                QScrollArea {
-                    border: none;
-                    background-color: transparent;
-                }
-                QScrollBar:vertical {
-                    background: #121214;
-                    width: 8px;
-                    border-radius: 4px;
-                }
-                QScrollBar::handle:vertical {
-                    background: #27272a;
-                    border-radius: 4px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background: #3f3f46;
-                }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    height: 0px;
-                }
-                QLabel {
-                    font-size: 13px;
-                    color: #e4e4e7;
-                    font-weight: 500;
-                }
-                QLabel#TitleLabel {
-                    font-size: 20px;
-                    font-weight: bold;
-                    color: #ffffff;
-                }
-                QLabel#SubtitleLabel {
-                    font-size: 12px;
-                    color: #a1a1aa;
-                    font-weight: 400;
-                }
-                QLabel#CardTitle {
-                    font-size: 13px;
-                    font-weight: bold;
-                    color: #ffffff;
-                }
-                QLabel#CardBadge {
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #34d399;
-                }
-                QLabel#CardDesc {
-                    font-size: 12px;
-                    color: #a1a1aa;
-                    font-weight: 400;
-                    line-height: 1.4;
-                }
-                QLabel#HintLabel {
-                    font-size: 11px;
-                    color: #71717a;
-                    font-weight: 400;
-                }
-                QWidget#CardBox {
-                    background-color: #141417;
-                    border: 1px solid #27272a;
-                    border-radius: 8px;
-                    padding: 12px;
-                }
-                QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {
-                    background-color: #18181b;
-                    border: 1px solid #3f3f46;
-                    border-radius: 6px;
-                    padding: 9px 12px;
-                    color: #ffffff;
-                    font-size: 13px;
-                }
-                QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
-                    border: 1px solid #ffffff;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    padding-right: 8px;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #18181b;
-                    color: #ffffff;
-                    selection-background-color: #27272a;
-                    selection-color: #ffffff;
-                    border: 1px solid #3f3f46;
-                    outline: none;
-                }
-                QPushButton {
-                    background-color: #ffffff;
-                    color: #09090b;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 11px 20px;
-                    font-weight: bold;
-                    font-size: 14px;
-                }
-                QPushButton:hover {
-                    background-color: #e4e4e7;
-                }
-                QPushButton#SecondaryBtn {
-                    background-color: #27272a;
-                    color: #ffffff;
-                    border: 1px solid #3f3f46;
-                    padding: 9px 16px;
-                    font-size: 13px;
-                }
-                QPushButton#SecondaryBtn:hover {
-                    background-color: #3f3f46;
-                }
-            """)
+    def _row(self, layout, icon, title, control, hint=None):
+        if layout.count():
+            divider = QtWidgets.QFrame()
+            divider.setObjectName("Divider")
+            divider.setFixedHeight(1)
+            layout.addWidget(divider)
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 10, 0, 10)
+        row.setSpacing(14)
+        row.addWidget(LineIcon(icon, 23))
+        text = QtWidgets.QVBoxLayout()
+        text.setSpacing(3)
+        text.addWidget(self._text(title))
+        if hint:
+            text.addWidget(self._text(hint, "HintLabel"))
+        row.addLayout(text, 1)
+        row.addWidget(control)
+        layout.addLayout(row)
 
     def _setup_ui(self):
         root_layout = QtWidgets.QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-
         scroll_area = QtWidgets.QScrollArea(self)
+        self.scroll_area = scroll_area
         scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
+        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         content_widget = QtWidgets.QWidget()
+        content_widget.setObjectName("Content")
         main_layout = QtWidgets.QVBoxLayout(content_widget)
-        main_layout.setContentsMargins(32, 24, 32, 24)
-        main_layout.setSpacing(18)
+        main_layout.setContentsMargins(24, 20, 24, 18)
+        main_layout.setSpacing(14)
 
-        # Cabeçalho com Logo Dinâmico e Toggle de Tema
-        header_layout = QtWidgets.QHBoxLayout()
+        header = QtWidgets.QHBoxLayout()
+        header.setSpacing(14)
+        # Keep the original window/tray identity, with an amber in-app microphone.
         self.logo_label = QtWidgets.QLabel()
-        header_layout.addWidget(self.logo_label)
-
-        title_lbl = QtWidgets.QLabel("Dita-eu")
-        title_lbl.setObjectName("TitleLabel")
-        subtitle_lbl = QtWidgets.QLabel("Ditado por Voz com Injeção Direta")
-        subtitle_lbl.setObjectName("SubtitleLabel")
-
-        title_vbox = QtWidgets.QVBoxLayout()
-        title_vbox.setSpacing(2)
-        title_vbox.addWidget(title_lbl)
-        title_vbox.addWidget(subtitle_lbl)
-
-        header_layout.addLayout(title_vbox)
-        header_layout.addStretch()
-
-        # Toggle Switch direto para Alternância de Tema
-        theme_container = QtWidgets.QWidget()
-        theme_layout = QtWidgets.QHBoxLayout(theme_container)
-        theme_layout.setContentsMargins(0, 0, 0, 0)
-        theme_layout.setSpacing(10)
-
-        self.theme_label = QtWidgets.QLabel("🌙 Modo Escuro" if self.current_theme == "dark" else "☀️ Modo Claro")
-        self.theme_switch = ToggleSwitch(checked=(self.current_theme == "dark"), theme=self.current_theme)
+        self.logo_label.hide()
+        header.addWidget(LineIcon("mic", 38))
+        titles = QtWidgets.QVBoxLayout()
+        titles.setSpacing(1)
+        titles.addWidget(self._text("Dita-eu", "TitleLabel"))
+        titles.addWidget(self._text("Sua voz, direto ao texto.", "SubtitleLabel"))
+        header.addLayout(titles, 1)
+        self.theme_switch = ThemeSelector(self.current_theme == "dark", self.current_theme)
         self.theme_switch.toggled.connect(self._on_theme_switch_toggled)
+        header.addWidget(self.theme_switch)
+        main_layout.addLayout(header)
 
-        theme_layout.addWidget(self.theme_label)
-        theme_layout.addWidget(self.theme_switch)
-        header_layout.addWidget(theme_container)
+        hero = self._card(main_layout)
+        hero_row = QtWidgets.QHBoxLayout()
+        hero_row.setContentsMargins(0, 9, 0, 9)
+        hero_row.setSpacing(18)
+        self.ready_visual = ReadyVisual()
+        hero_row.addWidget(self.ready_visual)
+        hero_text = QtWidgets.QVBoxLayout()
+        hero_text.setSpacing(5)
+        hero_text.addWidget(self._text("Pronto para ouvir", "SectionTitle"))
+        self.ready_hint = self._text("", "HintLabel")
+        hero_text.addWidget(self.ready_hint)
+        hero_row.addLayout(hero_text, 1)
+        hero.addLayout(hero_row)
+        self._update_shortcut_hint()
 
-        main_layout.addLayout(header_layout)
+        main_layout.addWidget(self._text("Configurações", "SectionTitle"))
+        settings = self._card(main_layout)
+        self.engine_combo = ComboBox()
+        self.engine_combo.setMinimumWidth(210)
+        self.engine_combo.addItem("Groq Whisper", "groq")
+        self.engine_combo.addItem("Google Gemini", "gemini")
+        self.engine_combo.addItem("Local · offline", "local")
+        self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(self.config.get("engine", "groq"))))
+        self._row(settings, "engine", "Motor de transcrição", self.engine_combo,
+                  "Reconhecimento de voz")
 
-        line = QtWidgets.QFrame()
-        line.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: #3f3f46; max-height: 1px;")
-        main_layout.addWidget(line)
-
-        # 1. Seletor de Motor
-        engine_layout = QtWidgets.QVBoxLayout()
-        engine_layout.setSpacing(6)
-        engine_lbl = QtWidgets.QLabel("Motor de Transcrição:")
-        self.engine_combo = QtWidgets.QComboBox()
-        self.engine_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-        self.engine_combo.addItem("⚡ Groq Whisper (Ultra-Rápido ~300ms)", "groq")
-        self.engine_combo.addItem("✨ Google Gemini (Flash Multimodal)", "gemini")
-        
-        current_eng = self.config.get("engine", "groq")
-        self.engine_combo.setCurrentIndex(0 if current_eng == "groq" else 1)
-
-        engine_layout.addWidget(engine_lbl)
-        engine_layout.addWidget(self.engine_combo)
-        main_layout.addLayout(engine_layout)
-
-        # 2. Modo Tradução (Alta Fidelidade e Coloquialidade Humana)
-        trans_layout = QtWidgets.QVBoxLayout()
-        trans_layout.setSpacing(6)
-        trans_lbl = QtWidgets.QLabel("Modo Tradução (Tempo Real):")
-        self.trans_combo = QtWidgets.QComboBox()
-        self.trans_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-        self.trans_combo.addItem("Original (Sem tradução / Transcrição direta)", "original")
-        self.trans_combo.addItem("🇺🇸 Inglês (English)", "en")
-        self.trans_combo.addItem("🇪🇸 Espanhol (Español)", "es")
-        self.trans_combo.addItem("🇫🇷 Francês (Français)", "fr")
-        self.trans_combo.addItem("🇩🇪 Alemão (Deutsch)", "de")
-        self.trans_combo.addItem("🇮🇹 Italiano (Italiano)", "it")
-        self.trans_combo.addItem("🎭 Modo Livre / Personagens (Prompt Personalizado)", "custom")
-
+        # Modelo offline: só aparece com o motor local e é baixado sob demanda.
+        local_layout = self._card(main_layout)
+        self.local_card = local_layout.parentWidget()
+        self.local_model_combo = ComboBox()
+        self.local_model_combo.setMinimumWidth(210)
+        for size, mb in local_transcriber.MODEL_SIZES.items():
+            label = "Base · rápido" if size == "base" else "Small · mais preciso"
+            self.local_model_combo.addItem(f"{label} (~{mb} MB)", size)
+        self.local_model_combo.setCurrentIndex(
+            max(0, self.local_model_combo.findData(self.config.get("local_model_size", local_transcriber.DEFAULT_MODEL_SIZE))))
+        self._row(local_layout, "engine", "Modelo offline", self.local_model_combo,
+                  "Processado neste computador, sem internet e sem cota de API")
+        self.local_download_btn = QtWidgets.QPushButton()
+        self.local_download_btn.setObjectName("SecondaryBtn")
+        self.local_download_btn.clicked.connect(self._download_local_model)
+        self._row(local_layout, "document", "Download do modelo", self.local_download_btn)
+        self.local_status = self._text("", "HintLabel")
+        local_layout.addWidget(self.local_status)
+        self._download_thread = None
+        self._refresh_local_ui()
+        self.trans_combo = ComboBox()
+        self.trans_combo.setMinimumWidth(210)
+        for label, value in [("Original · sem tradução", "original"), ("Inglês", "en"),
+                             ("Espanhol", "es"), ("Francês", "fr"), ("Alemão", "de"),
+                             ("Italiano", "it"), ("Modo livre", "custom")]:
+            self.trans_combo.addItem(label, value)
         current_trans = self.config.get("translation_target", "original")
-        for i in range(self.trans_combo.count()):
-            if self.trans_combo.itemData(i) == current_trans:
-                self.trans_combo.setCurrentIndex(i)
-                break
+        index = self.trans_combo.findData(current_trans)
+        self.trans_combo.setCurrentIndex(max(0, index))
+        self._row(settings, "language", "Tradução", self.trans_combo, "Idioma do texto de saída")
+        free_mode = self._card(main_layout)
+        self.custom_mode_button = QtWidgets.QPushButton()
+        self.custom_mode_button.setObjectName("SecondaryBtn")
+        self.custom_mode_button.clicked.connect(self._toggle_custom_mode)
+        self._row(free_mode, "document", "Modo livre", self.custom_mode_button,
+                  "Personalidades e instruções de escrita")
 
-        trans_hint = QtWidgets.QLabel(
-            "Sua fala será automaticamente traduzida ou reescrita conforme o idioma ou personagem selecionado."
-        )
-        trans_hint.setObjectName("HintLabel")
-        trans_hint.setWordWrap(True)
-
-        trans_layout.addWidget(trans_lbl)
-        trans_layout.addWidget(self.trans_combo)
-        trans_layout.addWidget(trans_hint)
-        main_layout.addLayout(trans_layout)
-
-        # 2.1 Card Dinâmico do Modo Livre / Personagens
         self.custom_prompt_box = QtWidgets.QWidget()
         self.custom_prompt_box.setObjectName("CardBox")
         custom_box_layout = QtWidgets.QVBoxLayout(self.custom_prompt_box)
@@ -660,7 +384,7 @@ class SettingsWindow(QtWidgets.QWidget):
         custom_title = QtWidgets.QLabel("Personalidade / Prompt do Modo Livre:")
         custom_title.setObjectName("CardTitle")
 
-        self.preset_combo = QtWidgets.QComboBox()
+        self.preset_combo = ComboBox()
         self.preset_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
         self.preset_combo.addItem("✉️ Email Prytter", "email_prytter")
         self.preset_combo.addItem("🎮 Jogador de Dota 2 estressado", "dota")
@@ -712,131 +436,100 @@ class SettingsWindow(QtWidgets.QWidget):
         self.custom_prompt_box.setVisible(current_trans == "custom")
         main_layout.addWidget(self.custom_prompt_box)
 
-        # 3. Modo de Funcionamento (Opção 1 Única e Padrão)
-        mode_card = QtWidgets.QWidget()
-        mode_card.setObjectName("CardBox")
-        mode_card_layout = QtWidgets.QVBoxLayout(mode_card)
-        mode_card_layout.setContentsMargins(14, 12, 14, 12)
-        mode_card_layout.setSpacing(6)
-
-        mode_title = QtWidgets.QLabel("Modo de Funcionamento:")
-        mode_title.setObjectName("CardTitle")
-        
-        mode_badge = QtWidgets.QLabel("✓ Colar tudo no final (Padrão / Mais Rápido)")
-        mode_badge.setObjectName("CardBadge")
-
-        mode_desc = QtWidgets.QLabel(
-            "Segure a tecla de atalho, fale normalmente e, ao soltar, o texto completo, formatado e pontuado é colado de uma vez só onde seu cursor estiver."
-        )
-        mode_desc.setObjectName("CardDesc")
-        mode_desc.setWordWrap(True)
-
-        mode_card_layout.addWidget(mode_title)
-        mode_card_layout.addWidget(mode_badge)
-        mode_card_layout.addWidget(mode_desc)
-        main_layout.addWidget(mode_card)
-
-        # 4. Tecla de Atalho Push-to-Talk
-        shortcut_layout = QtWidgets.QVBoxLayout()
-        shortcut_layout.setSpacing(6)
-        shortcut_lbl = QtWidgets.QLabel("Atalho Push-to-Talk (Manter pressionado para falar):")
-        
-        shortcut_row = QtWidgets.QHBoxLayout()
+        self._update_custom_mode_button()
+        main_layout.addWidget(self._text("Entrada e atalhos", "SectionTitle"))
+        inputs = self._card(main_layout)
+        shortcut_control = QtWidgets.QWidget()
+        shortcut_row = QtWidgets.QHBoxLayout(shortcut_control)
+        shortcut_row.setContentsMargins(0, 0, 0, 0)
         shortcut_row.setSpacing(8)
-        current_combo = " + ".join([k.upper() for k in self.config.get("trigger_keys", ["f8"])])
+        current_combo = " + ".join(k.upper() for k in self.config.get("trigger_keys", ["f8"]))
         self.shortcut_input = QtWidgets.QLineEdit(current_combo)
         self.shortcut_input.setReadOnly(True)
-        self.shortcut_input.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-
-        self.btn_record_key = QtWidgets.QPushButton("Detectar Tecla")
+        self.shortcut_input.setFixedWidth(100)
+        self.shortcut_input.setAlignment(QtCore.Qt.AlignCenter)
+        self.btn_record_key = QtWidgets.QPushButton("Alterar")
         self.btn_record_key.setObjectName("SecondaryBtn")
         self.btn_record_key.clicked.connect(self._record_key)
-
         shortcut_row.addWidget(self.shortcut_input)
         shortcut_row.addWidget(self.btn_record_key)
-
-        shortcut_hint = QtWidgets.QLabel("Segure a tecla configurada para falar. Ao soltar, o texto é colado onde seu cursor estiver.")
-        shortcut_hint.setObjectName("HintLabel")
-        shortcut_hint.setWordWrap(True)
-
-        shortcut_layout.addWidget(shortcut_lbl)
-        shortcut_layout.addLayout(shortcut_row)
-        shortcut_layout.addWidget(shortcut_hint)
-        main_layout.addLayout(shortcut_layout)
-
-        # 5. Microfone de Entrada
-        mic_layout = QtWidgets.QVBoxLayout()
-        mic_layout.setSpacing(6)
-        mic_lbl = QtWidgets.QLabel("Microfone de Entrada:")
-        self.mic_combo = QtWidgets.QComboBox()
-        self.mic_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        transform_keys = " + ".join(k.upper().replace("+", " + ") for k in
+                                    self.config.get("transform_trigger_keys", ["shift+f8"]))
+        self._row(inputs, "keyboard", "Atalho de ditado", shortcut_control,
+                  "Transformar seleção: " + transform_keys)
+        self.mic_combo = ComboBox()
+        self.mic_combo.setFixedWidth(240)
+        self.mic_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self._populate_microphones()
-        mic_layout.addWidget(mic_lbl)
-        mic_layout.addWidget(self.mic_combo)
-        main_layout.addLayout(mic_layout)
-
-        # 6. Altura da Pílula HUD na tela
-        hud_layout = QtWidgets.QHBoxLayout()
-        hud_lbl = QtWidgets.QLabel("Distância da base da tela (Pílula em pixels):")
+        self._row(inputs, "mic", "Microfone de entrada", self.mic_combo)
         self.hud_spin = QtWidgets.QSpinBox()
         self.hud_spin.setRange(50, 1000)
         self.hud_spin.setValue(self.config.get("hud_bottom_offset", 350))
         self.hud_spin.setSuffix(" px")
-        self.hud_spin.setMinimumWidth(110)
-        hud_layout.addWidget(hud_lbl)
-        hud_layout.addStretch()
-        hud_layout.addWidget(self.hud_spin)
-        main_layout.addLayout(hud_layout)
-
-        # 7. Iniciar com o Windows (Toggle Switch moderno estilo Windows 11)
-        autostart_card = QtWidgets.QWidget()
-        autostart_card.setObjectName("CardBox")
-        autostart_layout = QtWidgets.QHBoxLayout(autostart_card)
-        autostart_layout.setContentsMargins(14, 12, 14, 12)
-        autostart_layout.setSpacing(12)
-
-        autostart_text_vbox = QtWidgets.QVBoxLayout()
-        autostart_text_vbox.setSpacing(2)
-        autostart_title = QtWidgets.QLabel("Iniciar com o Windows")
-        autostart_title.setObjectName("CardTitle")
-        autostart_desc = QtWidgets.QLabel("Executar o aplicativo automaticamente em segundo plano ao ligar o computador")
-        autostart_desc.setObjectName("HintLabel")
-        autostart_text_vbox.addWidget(autostart_title)
-        autostart_text_vbox.addWidget(autostart_desc)
-
-        self.autostart_switch = ToggleSwitch(
-            checked=self.config.get("autostart", False),
-            theme=self.current_theme
-        )
-
-        autostart_layout.addLayout(autostart_text_vbox)
-        autostart_layout.addStretch()
-        autostart_layout.addWidget(self.autostart_switch)
-        main_layout.addWidget(autostart_card)
-
-        main_layout.addSpacing(6)
-
-        # Botão Salvar
-        self.btn_save = QtWidgets.QPushButton("Salvar Configurações")
-        self.btn_save.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.hud_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+        self.hud_spin.setFixedWidth(100)
+        self.hud_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.hud_slider.setTracking(False)
+        self.hud_slider.setRange(50, 1000)
+        self.hud_slider.setValue(self.hud_spin.value())
+        self.hud_slider.setMinimumWidth(100)
+        self.hud_slider.setMaximumWidth(160)
+        self.hud_slider.setAccessibleName("Distância da pílula à base da tela")
+        self.hud_slider.valueChanged.connect(self.hud_spin.setValue)
+        self.hud_spin.valueChanged.connect(self.hud_slider.setValue)
+        position = QtWidgets.QWidget()
+        position_row = QtWidgets.QHBoxLayout(position)
+        position_row.setContentsMargins(0, 0, 0, 0)
+        position_row.setSpacing(12)
+        position_row.addWidget(self.hud_slider)
+        position_row.addWidget(self.hud_spin)
+        self._row(inputs, "screen", "Posição da pílula", position)
+        self.autostart_switch = ToggleSwitch(self, self.config.get("autostart", False), self.current_theme)
+        self.autostart_switch.setAccessibleName("Iniciar com o Windows")
+        self._row(inputs, "windows", "Iniciar com o Windows", self.autostart_switch,
+                  "Executar em segundo plano ao ligar")
+        main_layout.addStretch()
+        scroll_area.setWidget(content_widget)
+        root_layout.addWidget(scroll_area, 1)
+        # The save action remains reachable even with the custom editor expanded.
+        footer = QtWidgets.QHBoxLayout()
+        footer.setContentsMargins(24, 10, 24, 18)
+        self.btn_save = QtWidgets.QPushButton("Salvar configurações")
+        self.btn_save.setMinimumHeight(44)
         self.btn_save.clicked.connect(self._manual_save_clicked)
-        main_layout.addWidget(self.btn_save)
+        footer.addWidget(self.btn_save)
+        root_layout.addLayout(footer)
 
-        # Conexão de sinais
         self.engine_combo.currentIndexChanged.connect(self._on_field_changed)
+        self.local_model_combo.currentIndexChanged.connect(self._on_field_changed)
         self.trans_combo.currentIndexChanged.connect(self._on_trans_combo_changed)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_combo_changed)
         self.custom_prompt_edit.textChanged.connect(self._on_field_changed)
         self.mic_combo.currentIndexChanged.connect(self._on_field_changed)
         self.hud_spin.valueChanged.connect(self._on_field_changed)
         self.autostart_switch.toggled.connect(self._on_field_changed)
+        for widget, name in ((self.engine_combo, "Motor de transcrição"),
+                             (self.trans_combo, "Tradução"), (self.mic_combo, "Microfone de entrada"),
+                             (self.hud_spin, "Distância da pílula em pixels"),
+                             (self.shortcut_input, "Atalho de ditado")):
+            widget.setAccessibleName(name)
 
-        scroll_area.setWidget(content_widget)
-        root_layout.addWidget(scroll_area)
+    def _update_shortcut_hint(self):
+        combo = " + ".join(k.upper() for k in self.config.get("trigger_keys", ["f8"]))
+        self.ready_hint.setText(f"Segure {combo} para ditar em qualquer aplicativo.")
+
+    def _update_custom_mode_button(self):
+        self.custom_mode_button.setText("Ativado  ›" if self.trans_combo.currentData() == "custom"
+                                        else "Desativado  ›")
+
+    def _toggle_custom_mode(self):
+        target = "original" if self.trans_combo.currentData() == "custom" else "custom"
+        self.trans_combo.setCurrentIndex(self.trans_combo.findData(target))
 
     def _on_trans_combo_changed(self):
         is_custom = self.trans_combo.currentData() == "custom"
         self.custom_prompt_box.setVisible(is_custom)
+        self._update_custom_mode_button()
         self._on_field_changed()
 
     def _on_preset_combo_changed(self):
@@ -865,6 +558,7 @@ class SettingsWindow(QtWidgets.QWidget):
                 break
         self.trans_combo.blockSignals(False)
         self.custom_prompt_box.setVisible(target == "custom")
+        self._update_custom_mode_button()
         self.config["translation_target"] = target
 
     def _populate_microphones(self):
@@ -895,10 +589,52 @@ class SettingsWindow(QtWidgets.QWidget):
                 self.config["trigger_keys"] = dialog.detected_keys
                 combo_text = " + ".join([k.upper() for k in dialog.detected_keys])
                 self.shortcut_input.setText(combo_text)
+                self._update_shortcut_hint()
                 self._save_settings(feedback=False)
 
     def _on_field_changed(self):
+        self._refresh_local_ui()
         self._save_settings(feedback=False)
+
+    def _refresh_local_ui(self):
+        """Mostra o card offline só com o motor local e reflete o estado do download."""
+        self.local_card.setVisible(self.engine_combo.currentData() == "local")
+        size = self.local_model_combo.currentData()
+        if self._download_thread is not None and self._download_thread.isRunning():
+            return
+        if not local_transcriber.is_available():
+            self.local_download_btn.setEnabled(False)
+            self.local_download_btn.setText("Indisponível")
+            self.local_status.setText("Esta versão do aplicativo não inclui o motor offline.")
+        elif local_transcriber.is_model_downloaded(size):
+            self.local_download_btn.setEnabled(False)
+            self.local_download_btn.setText("✓ Modelo pronto")
+            self.local_status.setText("Ditado offline ativo. Tradução, modo livre e Voice Transform ainda usam a nuvem.")
+        else:
+            self.local_download_btn.setEnabled(True)
+            self.local_download_btn.setText("Baixar modelo")
+            self.local_status.setText(
+                f"Baixe o modelo (~{local_transcriber.MODEL_SIZES[size]} MB) uma única vez. "
+                "Enquanto isso, o ditado usa a nuvem se houver chave configurada.")
+
+    def _download_local_model(self):
+        size = self.local_model_combo.currentData()
+        self.local_download_btn.setEnabled(False)
+        self.local_download_btn.setText("Baixando…")
+        self.local_status.setText("Baixando o modelo. Isso acontece só uma vez; pode continuar usando o app.")
+        thread = _ModelDownloadThread(size, self)
+        thread.done.connect(self._on_model_downloaded)
+        self._download_thread = thread
+        thread.start()
+
+    def _on_model_downloaded(self, ok: bool, size: str):
+        self._download_thread = None
+        self._refresh_local_ui()
+        if ok:
+            self._save_settings(feedback=False)  # reconstrói o motor e aquece o modelo
+        else:
+            self.local_download_btn.setText("Tentar novamente")
+            self.local_status.setText("Não foi possível baixar o modelo. Verifique a conexão e tente de novo.")
 
     def _manual_save_clicked(self):
         self._save_settings(feedback=True)
@@ -934,6 +670,7 @@ class SettingsWindow(QtWidgets.QWidget):
     def _save_settings(self, feedback: bool = False):
         self.config["theme"] = "dark" if self.theme_switch.isChecked() else "light"
         self.config["engine"] = self.engine_combo.currentData()
+        self.config["local_model_size"] = self.local_model_combo.currentData()
         self.config["translation_target"] = self.trans_combo.currentData()
         preset_key = self.preset_combo.currentData()
         self.config["custom_preset"] = preset_key
@@ -953,7 +690,7 @@ class SettingsWindow(QtWidgets.QWidget):
 
         if feedback:
             self.btn_save.setText("✓ Configurações Salvas!")
-            QtCore.QTimer.singleShot(1500, lambda: self.btn_save.setText("Salvar Configurações"))
+            QtCore.QTimer.singleShot(1500, lambda: self.btn_save.setText("Salvar configurações"))
 
     def closeEvent(self, event):
         event.ignore()

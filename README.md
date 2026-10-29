@@ -29,7 +29,8 @@ Muitas ferramentas de ditado são lentas, exigem navegadores abertos, colam dado
 5. **Duplo Motor de IA com Fallback Automático**:
    * **⚡ Groq Cloud (`whisper-large-v3-turbo` + LLMs `llama-3.3-70b` / `qwen/qwen3.8-27b`)**: Velocidade extrema de **~250ms a 400ms** com generosa cota gratuita diária.
    * **✨ Google Gemini (`gemini-flash-lite-latest`)**: Compreensão semântica profunda, latência ultrabaixa e redundância transparente.
-6. **Modo Claro & Escuro com Alto Contraste**: Padrão visual baseado nas diretrizes de acessibilidade **WCAG AAA / AA**, com alternância dinâmica de logotipo e controles em Toggle Switch estilo Windows 11.
+6. **🔒 Ditado 100% Offline (opcional)**: escolha o motor *Local · offline* e o áudio é transcrito no seu próprio computador (`faster-whisper`), sem internet e sem consumir cota de API. O modelo é baixado uma única vez, sob demanda. Tradução, Modo Livre e Voice Transform continuam usando um LLM em nuvem.
+7. **Modo Claro & Escuro com Alto Contraste**: Padrão visual baseado nas diretrizes de acessibilidade **WCAG AAA / AA**, com alternância dinâmica de logotipo e controles em Toggle Switch estilo Windows 11.
 
 ---
 
@@ -234,7 +235,8 @@ Um usuário comum trabalhando o dia inteiro consome menos de **2%** da franquia 
   - Groq Whisper Turbo (~250ms) + LLM Groq (~250ms) com ~7.200 reqs/dia gratuitas.
   - Google Gemini Flash Lite com ~1.500 reqs/dia gratuitas e fallback automático.
 - [x] **Watchdog de segurança contra congelamento de interface** e persistência protegida de credenciais para compilação `.exe`.
-- [x] **Suíte de testes automatizados** com cobertura de 89 casos de teste unitários.
+- [x] **Transcrição Local Offline (`faster-whisper` / CTranslate2)**: motor *Local · offline* nas configurações, com download sob demanda do modelo (`base` ~145 MB ou `small` ~480 MB) em `%APPDATA%/Dita-eu/models/`, inferência em CPU (int8) ou GPU NVIDIA (CUDA) com fallback automático para CPU.
+- [x] **Suíte de testes automatizados** com 141 casos de teste unitários.
 
 ### 📌 Próximos Passos (Futuro)
 - [ ] **Detecção Automática do Idioma de Entrada**: Falar em qualquer língua e o motor identificar o idioma sem configuração manual.

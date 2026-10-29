@@ -10,6 +10,8 @@ load_dotenv()
 from google import genai
 from google.genai import types
 
+from local_transcriber import LocalTranscriber, DEFAULT_MODEL_SIZE
+
 
 TRANSFORM_SYSTEM_PROMPT = """Você é um assistente de reescrita e transformação cirúrgica de texto integrado diretamente ao cursor do sistema operacional.
 Sua missão é pegar o [TEXTO_ORIGINAL] fornecido pelo usuário e reescrevê-lo estritamente de acordo com o [COMANDO_DE_VOZ].
@@ -398,16 +400,30 @@ class GeminiTranscriber:
 
 class TranscriptionEngine:
     """Fachada unificada ultra-rápida (~500ms para tradução completa) com zero travamento"""
-    def __init__(self, engine_type: str = "groq", groq_api_key: str = "", gemini_api_key: str = "", gemini_model: str = "gemini-flash-lite-latest"):
+    def __init__(self, engine_type: str = "groq", groq_api_key: str = "", gemini_api_key: str = "", gemini_model: str = "gemini-flash-lite-latest",
+                 local_model_size: str = DEFAULT_MODEL_SIZE):
         self.engine_type = engine_type.lower()
         self.groq_engine = GroqTranscriber(api_key=groq_api_key)
         self.gemini_engine = GeminiTranscriber(api_key=gemini_api_key, model=gemini_model or "gemini-flash-lite-latest")
+        self.local_engine = LocalTranscriber(model_size=local_model_size)
+
+    def preload_local(self):
+        """Aquece o modelo offline em segundo plano, se o motor local estiver ativo."""
+        if self.engine_type == "local":
+            threading.Thread(target=self.local_engine.preload, daemon=True).start()
 
     def transform_text(self, original_text: str, instruction_audio_bytes: bytes) -> str:
-        """Transformação respeita estritamente o motor selecionado, sem fallback."""
-        if self.engine_type == "groq":
+        """Transformação respeita estritamente o motor selecionado, sem fallback.
+
+        Reescrever texto exige um LLM em nuvem. Com o motor local selecionado não
+        há provedor de nuvem escolhido, então usa o que tiver chave configurada.
+        """
+        engine = self.engine_type
+        if engine == "local":
+            engine = "groq" if self.groq_engine.api_key else "gemini"
+        if engine == "groq":
             return self.groq_engine.transform_text(original_text, instruction_audio_bytes)
-        if self.engine_type == "gemini":
+        if engine == "gemini":
             return self.gemini_engine.transform_text(original_text, instruction_audio_bytes)
         return ""
 
@@ -416,7 +432,16 @@ class TranscriptionEngine:
 
         # 1. Transcrição do áudio em texto (prioriza motor selecionado)
         raw_text = ""
-        if self.engine_type == "groq":
+        if self.engine_type == "local" and self.local_engine.ready:
+            # Offline: silêncio/ininteligível devolve vazio sem acionar a nuvem.
+            raw_text = self.local_engine.transcribe(audio_bytes)
+        elif self.engine_type == "local":
+            print("[TranscriptionEngine] Modelo local indisponível, usando a nuvem como alternativa...")
+            if self.groq_engine.api_key:
+                raw_text = self.groq_engine.transcribe(audio_bytes)
+            if not raw_text and self.gemini_engine.client:
+                raw_text = self.gemini_engine.transcribe(audio_bytes)
+        elif self.engine_type == "groq":
             if self.groq_engine.api_key:
                 raw_text = self.groq_engine.transcribe(audio_bytes)
             if not raw_text and self.gemini_engine.client:

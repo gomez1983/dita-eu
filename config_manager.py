@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
     "hud_bottom_offset": 350,
     "theme": "dark",
     "autostart": False,
+    "local_model_size": "base",  # modelo do motor offline: "base" ou "small"
     "translation_target": "original",  # "original", "en", "es", "fr", "de", "it", "custom"
     "custom_preset": "email_prytter",
     "custom_prompt": PRESET_PROMPTS["email_prytter"],

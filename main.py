@@ -20,6 +20,7 @@ from injector import (
 )
 from overlay import FloatingHUD
 from settings_ui import SettingsWindow
+from ui_components import palette
 
 def get_resource_path(relative_path: str) -> str:
     if hasattr(sys, '_MEIPASS'):
@@ -84,8 +85,10 @@ class DictationApp(QtCore.QObject):
             engine_type=self.config.get("engine", "groq"),
             groq_api_key=self.config.get("groq_api_key", ""),
             gemini_api_key=self.config.get("gemini_api_key", ""),
-            gemini_model=self.config.get("gemini_model", "gemini-flash-lite-latest")
+            gemini_model=self.config.get("gemini_model", "gemini-flash-lite-latest"),
+            local_model_size=self.config.get("local_model_size", "base")
         )
+        self.engine.preload_local()
 
         self.sig_show_recording.connect(self.hud.set_recording)
         self.sig_show_processing.connect(self.hud.set_processing)
@@ -132,25 +135,8 @@ class DictationApp(QtCore.QObject):
         self._update_tray_tooltip()
 
         tray_menu = QtWidgets.QMenu()
-        tray_menu.setStyleSheet("""
-            QMenu {
-                background-color: #18181b;
-                color: #f4f4f5;
-                border: 1px solid #27272a;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 24px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #27272a;
-            }
-            QMenu::item:checked {
-                color: #60a5fa;
-                font-weight: bold;
-            }
-        """)
+        self.tray_menu = tray_menu
+        self._apply_tray_theme()
 
         title_action = tray_menu.addAction("Dita-eu")
         title_action.setEnabled(False)
@@ -194,6 +180,17 @@ class DictationApp(QtCore.QObject):
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
 
+    def _apply_tray_theme(self):
+        c = palette(self.config.get("theme", "dark"))
+        self.tray_menu.setStyleSheet(f"""
+            QMenu {{ background: {c['card']}; color: {c['text']};
+                border: 1px solid {c['border']}; padding: 5px; }}
+            QMenu::item {{ padding: 7px 24px; border-radius: 5px; }}
+            QMenu::item:selected {{ background: {c['hover']}; }}
+            QMenu::item:checked {{ color: {c['accent']}; font-weight: bold; }}
+            QMenu::item:disabled {{ color: {c['muted']}; }}
+        """)
+
     def _update_tray_tooltip(self):
         keys_str = " + ".join([k.upper() for k in self.config.get("trigger_keys", ["F8"])])
         target = self.config.get("translation_target", "original")
@@ -225,6 +222,7 @@ class DictationApp(QtCore.QObject):
         self.config = new_config
         self.hud.bottom_offset = self.config.get("hud_bottom_offset", 350)
         self.hud.set_theme(self.config.get("theme", "dark"))
+        self._apply_tray_theme()
         
         target_lang = self.config.get("translation_target", "original")
         self.hud.set_translation_target(target_lang)
@@ -237,8 +235,10 @@ class DictationApp(QtCore.QObject):
             engine_type=self.config.get("engine", "groq"),
             groq_api_key=self.config.get("groq_api_key", ""),
             gemini_api_key=self.config.get("gemini_api_key", ""),
-            gemini_model=self.config.get("gemini_model", "gemini-flash-lite-latest")
+            gemini_model=self.config.get("gemini_model", "gemini-flash-lite-latest"),
+            local_model_size=self.config.get("local_model_size", "base")
         )
+        self.engine.preload_local()
 
         self._update_tray_tooltip()
         keys_str = " + ".join([k.upper() for k in self.config.get("trigger_keys", ["F8"])])
