@@ -8,6 +8,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Prevenção de conflito de C++ Runtime (MSVCP140.dll) no Windows:
+# onnxruntime e ctranslate2 devem ser inicializados antes do PyQt5 carregar
+# suas próprias cópias de DLLs do Qt5/bin no processo, evitando APPCRASH c0000005.
+try:
+    import onnxruntime  # noqa: F401
+    import ctranslate2  # noqa: F401
+except Exception:
+    pass
+
 from PyQt5 import QtCore, QtGui, QtWidgets
 from pynput import keyboard
 
