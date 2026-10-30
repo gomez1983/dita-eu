@@ -135,7 +135,9 @@ class DictationApp(QtCore.QObject):
         self.keyboard_listener = None
         self._start_keyboard_listener()
 
-        QtCore.QTimer.singleShot(200, self.show_settings)
+        # Abre as configuracoes apenas se o aplicativo NAO tiver sido iniciado com --background
+        if "--background" not in sys.argv:
+            QtCore.QTimer.singleShot(200, self.show_settings)
 
     def _setup_tray_icon(self):
         icon = QtGui.QIcon(self.icon_ico_path if os.path.exists(self.icon_ico_path) else self.icon_white_path)

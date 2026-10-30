@@ -123,6 +123,9 @@ def load_config() -> dict:
     if config.get("gemini_model") in ("gemini-flash-latest", "gemini-3.8-flash", "", None):
         config["gemini_model"] = "gemini-flash-lite-latest"
 
+    # Sincroniza dinamicamente com o Registro real do Windows para evitar discrepancias
+    config["autostart"] = is_windows_autostart_enabled()
+
     return config
 
 def save_config(config: dict):
@@ -141,6 +144,17 @@ def save_config(config: dict):
     except Exception as e:
         print(f"[Config] Erro ao salvar config.json: {e}")
 
+def is_windows_autostart_enabled() -> bool:
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    app_name = "DitaEu"
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
+        val, _ = winreg.QueryValueEx(key, app_name)
+        winreg.CloseKey(key)
+        return bool(val)
+    except Exception:
+        return False
+
 def set_windows_autostart(enable: bool, app_path: str = None):
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
     app_name = "DitaEu"
@@ -149,7 +163,7 @@ def set_windows_autostart(enable: bool, app_path: str = None):
         if enable:
             if not app_path:
                 app_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
-            winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{app_path}"')
+            winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{app_path}" --background')
         else:
             try:
                 winreg.DeleteValue(key, app_name)
