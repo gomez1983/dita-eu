@@ -180,6 +180,7 @@ dita-eu/
 ├── injector.py                # Injeção via SendInput, captura de seleção e restauração de clipboard
 ├── main.py                    # Ponto de entrada, listeners de atalhos (F8 e Shift+F8) e System Tray
 ├── overlay.py                 # Pílula flutuante minimalista com feedback de pulso e badges de estado
+├── runtime_diagnostics.py     # Log operacional rotativo, sem áudio, transcrições ou credenciais
 ├── settings_ui.py             # Interface gráfica com Toggle Switches modernos e seletores
 ├── transcriber.py             # Clientes Groq e Gemini com pipeline de ditado, tradução e Voice Transform
 ├── icon.ico                   # Ícone para executável e barra de tarefas do Windows
@@ -199,6 +200,35 @@ dita-eu/
 ## 🛡️ Segurança & Privacidade
 - **Zero Vazamento**: Arquivos `.env`, `config.json` e chaves de API estão incluídos no `.gitignore` para proteção das credenciais.
 - **Áudio e Texto 100% em Memória RAM**: O áudio capturado e os trechos de texto selecionados nunca são gravados como arquivos temporários em disco; eles trafegam exclusivamente na memória e são descartados imediatamente após o envio.
+
+## Estabilidade e diagnóstico
+
+A captura do microfone acontece fora do callback dos atalhos. Falhas de abertura
+restauram o estado do ditado, e gravações consecutivas não compartilham o ciclo
+de abertura e fechamento do stream. Se a thread dos atalhos encerrar, o aplicativo
+tenta recriá-la automaticamente a cada três segundos.
+
+Cada gravação tem limite de cinco minutos. Durante o processamento, aguarde a
+conclusão antes de iniciar outro ditado. Resultados de ditado que ultrapassem
+30 segundos são descartados para evitar colagens tardias. As chamadas normais do
+Gemini têm limites HTTP e não acumulam novas requisições enquanto uma anterior
+ainda estiver pendente no mesmo cliente.
+
+Os registros operacionais ficam em `%LOCALAPPDATA%\Dita-eu\logs\runtime.log`,
+com fallback para APPDATA ou a pasta do usuário. O log mantém até quatro arquivos
+de 1 MiB e registra estados e tipos de falha, sem áudio, transcrições, seleção
+ou chaves de API. Se os atalhos pararem, esse arquivo ajuda a investigar.
+
+Para conferir as bibliotecas nativas, os ativos do VAD, o HUD e o loop Qt do
+executável sem usar microfone ou APIs:
+
+```powershell
+.\dist\Dita-eu.exe --self-test
+```
+
+O resultado é registrado no log. O teste de inicialização não substitui a
+validação dos atalhos e do microfone em uso prolongado. Os incidentes e as
+proteções permanentes estão documentados em [POST_MORTEM.md](POST_MORTEM.md).
 
 ---
 
@@ -236,7 +266,7 @@ Um usuário comum trabalhando o dia inteiro consome menos de **2%** da franquia 
   - Google Gemini Flash Lite com ~1.500 reqs/dia gratuitas e fallback automático.
 - [x] **Watchdog de segurança contra congelamento de interface** e persistência protegida de credenciais para compilação `.exe`.
 - [x] **Transcrição Local Offline (`faster-whisper` / CTranslate2)**: motor *Local · offline* nas configurações, com download sob demanda do modelo (`base` ~145 MB ou `small` ~480 MB) em `%APPDATA%/Dita-eu/models/`, inferência em CPU (int8) ou GPU NVIDIA (CUDA) com fallback automático para CPU.
-- [x] **Suíte de testes automatizados** com 141 casos de teste unitários.
+- [x] **Suíte de testes automatizados** com 157 casos de teste unitários, incluindo recuperação de atalhos, concorrência de streams e limites de espera.
 
 ### 📌 Próximos Passos (Futuro)
 - [ ] **Detecção Automática do Idioma de Entrada**: Falar em qualquer língua e o motor identificar o idioma sem configuração manual.

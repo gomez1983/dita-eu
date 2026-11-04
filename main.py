@@ -21,7 +21,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from pynput import keyboard
 
 import config_manager
-from audio_recorder import AudioRecorder
+from audio_recorder import AudioRecorder, MAX_RECORDING_SECONDS
+from runtime_diagnostics import logger, configure_runtime_logging
 from transcriber import TranscriptionEngine
 from injector import (
     inject_text, get_selected_text, inject_transformed_text,
@@ -35,6 +36,15 @@ def get_resource_path(relative_path: str) -> str:
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
+
+@dataclass
+class _DictationSession:
+    engine: TranscriptionEngine
+    config: dict
+    released: threading.Event = field(default_factory=threading.Event)
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    processing_started: float = 0.0
 
 
 @dataclass
@@ -111,6 +121,8 @@ class DictationApp(QtCore.QObject):
         self._transform_session = None
         self._transform_latched_keys = frozenset()
         self._dictation_jobs = 0
+        self._dictation_session = None
+        self._shutting_down = False
 
         self.hud_safety_timer = QtCore.QTimer()
         self.hud_safety_timer.setSingleShot(True)
@@ -134,6 +146,10 @@ class DictationApp(QtCore.QObject):
 
         self.keyboard_listener = None
         self._start_keyboard_listener()
+        self.listener_timer = QtCore.QTimer(self)
+        self.listener_timer.setInterval(3000)
+        self.listener_timer.timeout.connect(self._check_keyboard_listener)
+        self.listener_timer.start()
 
         # Abre as configuracoes apenas se o aplicativo NAO tiver sido iniciado com --background
         if "--background" not in sys.argv:
@@ -255,10 +271,13 @@ class DictationApp(QtCore.QObject):
         with self._lock:
             self._currently_pressed_keys.clear()
             self._transform_latched_keys = frozenset()
+            if self._dictation_session is not None:
+                self._dictation_session.cancelled.set()
+                self._dictation_session.released.set()
             if self._transform_session is not None:
                 self._transform_session.cancelled.set()
                 self._transform_session.released.set()
-                self._transform_session = None
+                # Keep ownership until the worker has closed its microphone.
 
         if self.keyboard_listener is not None:
             self.keyboard_listener.suppress_transform_event = False
@@ -312,6 +331,27 @@ class DictationApp(QtCore.QObject):
         )
         self.keyboard_listener.daemon = True
         self.keyboard_listener.start()
+        logger.info("Keyboard listener started")
+
+    def _check_keyboard_listener(self):
+        if self._shutting_down or self.keyboard_listener.is_alive():
+            return
+        logger.warning("Keyboard listener stopped; recovering")
+        try:
+            self.keyboard_listener.join(timeout=0)
+        except Exception as error:
+            logger.warning("Keyboard callback failed type=%s", type(error).__name__)
+        with self._lock:
+            self._currently_pressed_keys.clear()
+            self._transform_latched_keys = frozenset()
+            for session in (self._dictation_session, self._transform_session):
+                if session is not None:
+                    session.cancelled.set()
+                    session.released.set()
+        try:
+            self._start_keyboard_listener()
+        except Exception as error:
+            logger.error("Keyboard listener recovery failed type=%s", type(error).__name__)
 
     def _filter_keyboard_event(self, msg, data):
         listener = getattr(self, "keyboard_listener", None)
@@ -397,29 +437,36 @@ class DictationApp(QtCore.QObject):
 
     def _start_dictation(self):
         with self._lock:
-            if self._is_active or self._transform_session is not None:
+            if self._is_active or self._dictation_jobs or self._transform_session is not None:
                 return
+            session = _DictationSession(self.engine, self.config.copy())
+            self._dictation_session = session
             self._is_active = True
+            self._dictation_jobs += 1
 
-        target_lang = self.config.get("translation_target", "original")
-        print(f"[Dita-eu] Gravando... (Motor: {self.config.get('engine')}, Tradução: {target_lang})")
-        self.sig_show_recording.emit()
-        self.recorder.start()
+        # Never call PortAudio from pynput's message loop.
+        try:
+            threading.Thread(target=self._process_and_inject, args=(session,), daemon=True,
+                             name="dictation").start()
+        except Exception as error:
+            with self._lock:
+                self._dictation_session = None
+                self._is_active = False
+                self._dictation_jobs -= 1
+            logger.error("Dictation worker start failed type=%s", type(error).__name__)
 
     def _stop_dictation(self):
         with self._lock:
             if not self._is_active:
                 return
             self._is_active = False
-            self._dictation_jobs += 1
-
-        print("[Dita-eu] Finalizado. Transcrevendo...")
-        self.sig_show_processing.emit()
-        QtCore.QMetaObject.invokeMethod(self.hud_safety_timer, "start", QtCore.Qt.ConnectionType.QueuedConnection, QtCore.Q_ARG(int, 15000))
-        threading.Thread(target=self._process_and_inject, daemon=True).start()
+            if self._dictation_session is not None:
+                self._dictation_session.released.set()
 
     def _on_hud_timeout(self):
         with self._lock:
+            if self._dictation_session is not None:
+                self._dictation_session.cancelled.set()
             if self._transform_session is not None:
                 session = self._transform_session
                 session.cancelled.set()
@@ -429,33 +476,71 @@ class DictationApp(QtCore.QObject):
                 if not session.injecting:
                     self._transform_session = None
         print("[Dita-eu] Watchdog: Processamento excedeu tempo limite. Ocultando HUD por segurança.")
+        logger.warning("Processing HUD deadline exceeded")
         self.sig_hide_hud.emit()
 
-    def _process_and_inject(self):
+    def _process_and_inject(self, session=None):
+        recording = False
         try:
+            if session is not None:
+                if session.cancelled.is_set() or session.released.is_set():
+                    return
+                recording = True
+                self.recorder.start()
+                logger.info("Dictation recording started")
+                self.sig_show_recording.emit()
+                if not session.released.wait(MAX_RECORDING_SECONDS):
+                    logger.warning("Recording duration limit reached")
+                with self._lock:
+                    self._is_active = False
             audio_bytes = self.recorder.stop()
+            recording = False
+            if session is not None and session.cancelled.is_set():
+                return
             if not audio_bytes or len(audio_bytes) < 4000:
                 print("[Dita-eu] Áudio muito curto ou inaudível.")
                 return
 
-            target_lang = self.config.get("translation_target", "original")
+            config = session.config if session is not None else self.config
+            engine = session.engine if session is not None else self.engine
+            if session is not None:
+                session.processing_started = time.monotonic()
+                self.sig_show_processing.emit()
+                QtCore.QMetaObject.invokeMethod(
+                    self.hud_safety_timer, "start", QtCore.Qt.ConnectionType.QueuedConnection,
+                    QtCore.Q_ARG(int, 30000))
+            logger.info("Dictation processing started engine=%s", config.get("engine", "groq"))
+            target_lang = config.get("translation_target", "original")
             if target_lang == "custom":
-                custom_prompt = self.config.get("custom_prompt", "")
-                text = self.engine.transcribe(audio_bytes, target_lang=target_lang, custom_prompt=custom_prompt)
+                custom_prompt = config.get("custom_prompt", "")
+                text = engine.transcribe(audio_bytes, target_lang=target_lang, custom_prompt=custom_prompt)
             else:
-                text = self.engine.transcribe(audio_bytes, target_lang=target_lang)
+                text = engine.transcribe(audio_bytes, target_lang=target_lang)
+            if session is not None and (session.cancelled.is_set()
+                    or time.monotonic() - session.processing_started >= 30):
+                logger.warning("Late dictation result discarded")
+                return
             if text:
-                print(f"[Dita-eu] Texto transcrito ({target_lang}): '{text}'")
                 inject_text(text, restore_clipboard=True)
+                logger.info("Dictation injection finished")
             else:
                 print("[Dita-eu] Nenhuma fala identificada.")
         except Exception as e:
-            print(f"[Dita-eu] Erro na transcrição ou injeção: {e}")
+            logger.warning("Dictation failed type=%s", type(e).__name__)
         finally:
+            if recording:
+                try:
+                    self.recorder.stop()
+                except Exception as error:
+                    logger.warning("Recording cleanup failed type=%s", type(error).__name__)
             with self._lock:
+                if session is not None and self._dictation_session is session:
+                    self._dictation_session = None
+                    self._is_active = False
                 QtCore.QMetaObject.invokeMethod(self.hud_safety_timer, "stop", QtCore.Qt.ConnectionType.QueuedConnection)
                 self.sig_hide_hud.emit()
                 self._dictation_jobs -= 1
+            logger.info("Dictation session finished")
 
     def _start_transform(self, trigger_keys):
         with self._lock:
@@ -481,7 +566,8 @@ class DictationApp(QtCore.QObject):
             recording = True
             self.recorder.start()
             self.sig_transform_state.emit(session, "recording")
-            session.released.wait()
+            if not session.released.wait(MAX_RECORDING_SECONDS):
+                logger.warning("Transform recording duration limit reached")
             audio_bytes = self.recorder.stop()
             recording = False
             if session.cancelled.is_set() or not audio_bytes or len(audio_bytes) < 4000:
@@ -539,7 +625,12 @@ class DictationApp(QtCore.QObject):
                 self.hud.hide_hud()
 
     def _quit_app(self):
+        self._shutting_down = True
+        self.listener_timer.stop()
         with self._lock:
+            if self._dictation_session is not None:
+                self._dictation_session.cancelled.set()
+                self._dictation_session.released.set()
             if self._transform_session is not None:
                 self._transform_session.cancelled.set()
                 self._transform_session.released.set()
@@ -549,19 +640,34 @@ class DictationApp(QtCore.QObject):
         self.q_app.quit()
 
 def handle_exception(exc_type, exc_value, exc_traceback):
-    """Handler global para capturar exceções não tratadas e evitar travamento silencioso"""
-    err_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-    print(f"[Dita-eu Fatal Error] {err_msg}", file=sys.stderr)
-    try:
-        with open("crash.log", "a", encoding="utf-8") as f:
-            f.write(f"--- Crash {time.ctime()} ---\n{err_msg}\n")
-    except Exception:
-        pass
+    """Keep stack locations without persisting API errors that can echo input."""
+    logger.error("Unhandled exception type=%s stack=%s", exc_type.__name__,
+                 "".join(traceback.format_tb(exc_traceback)))
 
 def main():
+    configure_runtime_logging()
+    logger.info("Application starting frozen=%s", getattr(sys, "frozen", False))
     sys.excepthook = handle_exception
+    threading.excepthook = lambda args: handle_exception(
+        args.exc_type, args.exc_value, args.exc_traceback)
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    if "--self-test" in sys.argv:
+        # Check the packaged native libraries, VAD assets, HUD and Qt event loop
+        # without opening the microphone, installing shortcuts or calling APIs.
+        from faster_whisper.vad import get_vad_model
+        get_vad_model()
+        hud = FloatingHUD()
+        for method in ("set_recording", "set_processing", "update_volume",
+                       "hide_hud", "update_preview_text", "set_transform",
+                       "set_transform_processing", "show_no_selection"):
+            if not callable(getattr(hud, method, None)):
+                raise RuntimeError("Missing HUD method: " + method)
+        QtCore.QTimer.singleShot(100, app.quit)
+        result = app.exec_()
+        logger.info("Packaged self-test passed")
+        sys.exit(result)
 
     ico_path = get_resource_path("icon.ico")
     if os.path.exists(ico_path):

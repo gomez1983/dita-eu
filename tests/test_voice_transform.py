@@ -28,6 +28,7 @@ class VoiceTransformTests(unittest.TestCase):
         self.app._transform_latched_keys = frozenset()
         self.app._transform_session = None
         self.app._dictation_jobs = 0
+        self.app._dictation_session = None
         self.app._is_active = False
         self.app.engine = Mock()
         self.app.recorder = Mock()
@@ -271,6 +272,7 @@ class VoiceTransformTests(unittest.TestCase):
                 patch.object(main.QtCore.QTimer, "singleShot"):
             app = main.DictationApp(self.qt_app)
         app.volume_timer.stop()
+        app.listener_timer.stop()
         app.hud_safety_timer.stop()
         app.hud.close()
         self.assertIsNone(app._transform_session)

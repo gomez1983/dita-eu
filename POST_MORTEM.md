@@ -155,4 +155,95 @@ except ImportError:
 ### Camada 3: Versionamento do `Dita-eu.spec` no Git
 O arquivo `Dita-eu.spec` foi removido do esquecimento do `.gitignore` e versionado diretamente no repositório com `git add -f Dita-eu.spec` para que futuras compilações usem rigorosamente as mesmas regras de build.
 
+---
+
+# Post-Mortem: Atalhos param de responder com a interface ainda funcional
+
+## 1. Incidente e grau de certeza
+
+- **Data do relato**: 04/11/2026.
+- **Sintoma**: após algum tempo em segundo plano, os atalhos deixam de funcionar;
+  as configurações continuam abrindo pelo ícone da bandeja.
+- **Impacto**: perda do ditado até reiniciar o aplicativo.
+- **Status**: defeitos reproduzidos e corrigidos em código, com testes de regressão;
+  a estabilidade por longos períodos ainda depende de validação em uso real.
+- **Limite da conclusão**: não havia log persistente do listener na sessão afetada.
+  Os mecanismos abaixo foram reproduzidos, mas não é possível afirmar qual deles
+  iniciou a falha relatada naquele dia.
+
+## 2. Defeitos reproduzidos
+
+1. O callback de F8 abria o microfone diretamente. Uma exceção nessa abertura
+   saía do callback e fazia o pynput encerrar o listener. `_is_active` permanecia
+   verdadeiro. O loop Qt continuava funcionando, explicando por que a janela de
+   configurações ainda podia abrir. Não havia recuperação do listener.
+2. Ao soltar F8, o fechamento do stream ocorria em outra thread; um novo F8 podia
+   abrir outro stream antes desse fechamento. O `stop()` antigo voltava a usar a
+   referência compartilhada e fechava o stream novo, perdendo referências e
+   deixando o estado de gravação inconsistente.
+3. Os três caminhos normais do Gemini usavam `future.result(timeout=...)` dentro
+   de `with ThreadPoolExecutor(...)`. Ao expirar o prazo, a saída do contexto
+   aguardava a chamada SDK terminar. O prazo de 8/12 segundos era inefetivo.
+4. Sem uma soltura de tecla, os frames de áudio podiam se acumular indefinidamente.
+
+## 3. Registros do Windows
+
+- Em **02/11/2026 22:21:18**, houve evento 1001 `RADAR_PRE_LEAK_64` para
+  `Dita-eu.exe`. É um alerta de possível vazamento; não identifica a alocação nem
+  prova que esse foi o motivo da interrupção dos atalhos.
+- A consulta aos eventos Application 1000/1001/1002 não encontrou crash/hang do
+  executável Dita-eu no dia do relato. Falhas de `python.exe` com `MSVCP140.dll`
+  foram distinguidas do executável distribuído e não usadas como causa deste caso.
+
+## 4. Correções e regras permanentes
+
+- **Callbacks de teclado devem permanecer curtos**: abertura, espera e fechamento
+  do microfone agora pertencem a uma sessão em thread separada. Soltar o atalho
+  apenas sinaliza um evento. Falhas de captura restauram o estado em `finally`.
+- **Não compartilhar o ciclo de vida de streams entre gravações**: a aplicação
+  impede sessões de ditado sobrepostas; o gravador serializa `start()`/`stop()`,
+  usa a referência local do stream e sempre tenta fechá-lo, mesmo se `stop()` falhar.
+  Callbacks de uma geração antiga não podem anexar frames à seguinte.
+- **Não liberar uma transformação cancelada antes de fechar seu microfone**:
+  alterações de configuração cancelam a sessão, mas mantêm a propriedade da
+  captura até a conclusão do worker.
+- **Recuperar listeners encerrados**: a cada três segundos é verificado se a
+  thread encerrou; a exceção pendente é recolhida, as teclas/sessões são limpas
+  ou canceladas e uma nova instância do listener é criada. Não tentar reiniciar
+  a mesma instância de `threading.Thread`. Isso não detecta todos os casos em
+  que o Windows remove silenciosamente um hook ainda associado a uma thread viva.
+- **Prazos Gemini**: limites HTTP explícitos e saída do executor sem espera;
+  uma chamada SDK ainda pendente impede criar outra chamada normal no mesmo
+  cliente. Não usar `with ThreadPoolExecutor` para implementar um prazo de retorno.
+- **Áudio limitado**: gravações têm limite de cinco minutos e teto de frames;
+  perder um key-up não pode criar um buffer sem limite. Processamentos de ditado
+  com mais de 30 segundos são cancelados para evitar colagens tardias.
+- **Diagnóstico persistente**: log rotativo em
+  `%LOCALAPPDATA%\Dita-eu\logs\runtime.log` (com fallback para APPDATA/home),
+  até quatro arquivos de 1 MiB. São registrados estados, tipos de erro e locais
+  de stack; não gravar áudio, transcrições, seleção, mensagens brutas de APIs ou
+  chaves. Esse log substitui o `crash.log` relativo para exceções não tratadas
+  e inclui falhas em threads.
+- **Preservar as proteções anteriores**: ordem de importação nativa, métodos
+  defensivos do HUD e sanitização/ativos VAD do `Dita-eu.spec` foram mantidos.
+
+## 5. Validação
+
+- A suíte anterior tinha 141 testes; a suíte ampliada passou com **157 testes**.
+  Foram adicionados testes de regressão para
+  as falhas acima, incluindo recuperação após erro, concorrência de streams,
+  callbacks atrasados, limites de áudio, cancelamento e prazos dos três métodos
+  Gemini. A suíte ampliada passou antes do empacotamento.
+- O modo interno `--self-test` valida bibliotecas nativas, carregamento do VAD,
+  métodos públicos do HUD e loop Qt sem instalar atalhos, usar microfone ou APIs.
+  O executável gerado pelo `Dita-eu.spec` passou nesse teste, com código de saída
+  zero. A auditoria do pacote confirmou o Silero VAD e as cinco DLLs MSVC idênticas
+  às de System32. Os hashes dos fontes permaneceram iguais durante a compilação.
+- O novo binário foi entregue em `dist/Dita-eu.exe`, preservando os arquivos de
+  configuração e uma cópia do executável anterior em `dist/`. O resultado e o
+  caminho do backup estão em `output/runtime-diagnosis/release.json`.
+- Evidências da investigação inicial e reproduções do comportamento antigo ficam
+  em `output/runtime-diagnosis/`. O script de reprodução antigo documenta a versão
+  defeituosa; os testes em `tests/test_runtime_recovery.py` validam as correções.
+
 

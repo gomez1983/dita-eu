@@ -11,6 +11,10 @@ from google import genai
 from google.genai import types
 
 from local_transcriber import LocalTranscriber, DEFAULT_MODEL_SIZE
+from runtime_diagnostics import logger
+
+GEMINI_TRANSCRIBE_TIMEOUT_SECONDS = 12
+GEMINI_TEXT_TIMEOUT_SECONDS = 8
 
 
 TRANSFORM_SYSTEM_PROMPT = """Você é um assistente de reescrita e transformação cirúrgica de texto integrado diretamente ao cursor do sistema operacional.
@@ -226,12 +230,46 @@ class GeminiTranscriber:
         self.model = model or "gemini-flash-lite-latest"
         self.language = language or os.getenv("LANGUAGE", "pt-BR")
         self.client = None
+        self._request_slot = threading.BoundedSemaphore(1)
 
         if self.api_key:
             try:
                 self.client = genai.Client(api_key=self.api_key)
             except Exception as e:
                 print(f"[GeminiTranscriber] Erro ao instanciar client: {e}")
+
+    def _bounded_call(self, call, timeout, fallback=""):
+        # A timed-out SDK request may still be finishing. Do not accumulate
+        # another thread/request on each new hotkey press.
+        if not self._request_slot.acquire(blocking=False):
+            logger.warning("Gemini request skipped; previous request still pending")
+            return fallback
+
+        def run():
+            try:
+                return call()
+            finally:
+                self._request_slot.release()
+
+        try:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        except Exception as error:
+            self._request_slot.release()
+            logger.warning("Gemini executor start failed type=%s", type(error).__name__)
+            return fallback
+        try:
+            try:
+                future = executor.submit(run)
+            except Exception:
+                self._request_slot.release()
+                raise
+            return future.result(timeout=timeout)
+        except Exception as error:
+            logger.warning("Gemini request failed or timed out type=%s", type(error).__name__)
+            return fallback
+        finally:
+            # A context manager waits for the SDK even after result() times out.
+            executor.shutdown(wait=False)
 
     def transcribe(self, audio_bytes: bytes) -> str:
         if not audio_bytes or not self.client:
@@ -255,18 +293,13 @@ class GeminiTranscriber:
                 contents=[audio_part, prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.1
+                    temperature=0.1,
+                    http_options=types.HttpOptions(timeout=int(GEMINI_TRANSCRIBE_TIMEOUT_SECONDS * 1000)),
                 )
             )
             return (response.text or "").strip()
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_call)
-                return fut.result(timeout=12)
-        except Exception as e:
-            print(f"[GeminiTranscriber] Erro ou timeout na chamada Gemini: {e}")
-            return ""
+        return self._bounded_call(_call, GEMINI_TRANSCRIBE_TIMEOUT_SECONDS)
 
     def translate_text(self, text: str, target_lang: str) -> str:
         """Tradução de texto via Gemini com timeout de segurança de 8s"""
@@ -297,18 +330,13 @@ class GeminiTranscriber:
                 contents=[text],
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.2
+                    temperature=0.2,
+                    http_options=types.HttpOptions(timeout=int(GEMINI_TEXT_TIMEOUT_SECONDS * 1000)),
                 )
             )
             return (response.text or "").strip()
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_call)
-                return fut.result(timeout=8)
-        except Exception as e:
-            print(f"[GeminiTranscriber Translation] Erro ou timeout na chamada Gemini: {e}")
-            return ""
+        return self._bounded_call(_call, GEMINI_TEXT_TIMEOUT_SECONDS)
 
     def apply_custom_style(self, text: str, custom_prompt: str) -> str:
         """Aplica prompt customizado de personalidade/estilo sobre o texto falado via Gemini"""
@@ -329,19 +357,13 @@ class GeminiTranscriber:
                 contents=[text],
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.4
+                    temperature=0.4,
+                    http_options=types.HttpOptions(timeout=int(GEMINI_TEXT_TIMEOUT_SECONDS * 1000)),
                 )
             )
             return (response.text or "").strip()
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_call)
-                res = fut.result(timeout=8)
-                return res if res else text
-        except Exception as e:
-            print(f"[GeminiTranscriber CustomStyle] Erro ou timeout: {e}")
-            return text
+        return self._bounded_call(_call, GEMINI_TEXT_TIMEOUT_SECONDS, fallback=text) or text
 
     def transform_text(self, original_text: str, instruction_audio_bytes: bytes) -> str:
         """Duas chamadas Gemini em RAM, com prazo total independente do ditado."""
