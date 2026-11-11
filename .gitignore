@@ -30,3 +30,7 @@ dist/
 *.njsproj
 *.sln
 *.swp
+
+output/
+Referenc*
+Referênc*

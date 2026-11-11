@@ -1,16 +1,39 @@
 import os
 import sys
 import sounddevice as sd
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets, QtSvg
 from pynput import keyboard
 
 import config_manager
 import local_transcriber
 from ui_components import ComboBox, LineIcon, ReadyVisual, ThemeSelector, palette, stylesheet
 
+
+class _HeaderLogoBadge(QtWidgets.QWidget):
+    def __init__(self, theme="dark", parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.setFixedSize(38, 38)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        c = palette(self.theme)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor(c["bright"]))
+        painter.drawEllipse(QtCore.QRectF(1, 1, 36, 36))
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            'fill="none" stroke="#ffffff" stroke-width="2.0" stroke-linecap="round" '
+            'stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/>'
+            '<path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg>'
+        )
+        QtSvg.QSvgRenderer(svg.encode()).render(painter, QtCore.QRectF(9, 9, 20, 20))
+
+
 class ToggleSwitch(QtWidgets.QAbstractButton):
     """Toggle switch moderno e minimalista estilo iOS / Windows 11 Settings"""
-    def __init__(self, parent=None, checked=False, theme: str = "dark"):
+    def __init__(self, parent=None, checked=False, theme="dark"):
         super().__init__(parent)
         self.setCheckable(True)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
@@ -40,11 +63,11 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         self._anim.setEndValue(1.0 if checked else 0.0)
         self._anim.start()
 
-    def set_theme(self, theme: str):
+    def set_theme(self, theme):
         self.theme = theme
         self.update()
 
-    def hitButton(self, pos: QtCore.QPoint):
+    def hitButton(self, pos):
         return self.rect().contains(pos)
 
     def paintEvent(self, event):
@@ -55,7 +78,7 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         if self._offset > 0.0:
             track_color = QtGui.QColor(palette(self.theme)["bright"])  # Azul vibrante de ativação
         else:
-            track_color = QtGui.QColor("#3f3f46") if self.theme == "dark" else QtGui.QColor("#cbd5e1")
+            track_color = QtGui.QColor("#263552") if self.theme == "dark" else QtGui.QColor("#cbd5e1")
 
         painter.setBrush(QtGui.QBrush(track_color))
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -74,7 +97,7 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
 
 
 class KeyRecorderDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, theme: str = "dark"):
+    def __init__(self, parent=None, theme="dark"):
         super().__init__(parent)
         self.theme = theme
         self.setWindowTitle("Detectar Atalho")
@@ -121,7 +144,7 @@ class KeyRecorderDialog(QtWidgets.QDialog):
     def _apply_theme(self):
         self.setStyleSheet(stylesheet(self.theme))
 
-    def _normalize_key(self, key) -> str:
+    def _normalize_key(self, key):
         if isinstance(key, keyboard.Key):
             name = key.name.lower()
             if "shift" in name:
@@ -189,7 +212,7 @@ class _ModelDownloadThread(QtCore.QThread):
     """Baixa o modelo offline fora da thread da interface."""
     done = QtCore.pyqtSignal(bool, str)
 
-    def __init__(self, size: str, parent=None):
+    def __init__(self, size, parent=None):
         super().__init__(parent)
         self.size = size
 
@@ -205,12 +228,13 @@ class _ModelDownloadThread(QtCore.QThread):
 class SettingsWindow(QtWidgets.QWidget):
     config_saved = QtCore.pyqtSignal(dict)
 
-    def __init__(self, config: dict, icon_path: str = None, icon_white_path: str = None, icon_dark_path: str = None):
+    def __init__(self, config, icon_path=None, icon_white_path=None, icon_dark_path=None):
         super().__init__()
         self.config = config.copy()
         self.icon_white_path = icon_white_path or icon_path
         self.icon_dark_path = icon_dark_path or icon_path
         self.current_theme = self.config.get("theme", "dark")
+        self._card_shadows = []
 
         self.setWindowTitle("Dita-eu — Configurações")
         self.setObjectName("SettingsRoot")
@@ -220,6 +244,22 @@ class SettingsWindow(QtWidgets.QWidget):
 
         self._setup_ui()
         self._apply_theme(self.current_theme)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QtGui.QColor(palette(self.current_theme)["bg"]))
+
+        grad = QtGui.QRadialGradient(self.width() * 0.42, 0.0, self.width() * 0.65)
+        if self.current_theme == "light":
+            grad.setColorAt(0.0, QtGui.QColor(56, 90, 148, 52))
+            grad.setColorAt(0.55, QtGui.QColor(92, 128, 188, 18))
+            grad.setColorAt(1.0, QtGui.QColor(238, 242, 247, 0))
+        else:
+            grad.setColorAt(0.0, QtGui.QColor(56, 107, 192, 55))
+            grad.setColorAt(0.55, QtGui.QColor(30, 58, 110, 22))
+            grad.setColorAt(1.0, QtGui.QColor(13, 20, 36, 0))
+        painter.fillRect(self.rect(), QtGui.QBrush(grad))
 
     def _update_logo(self):
         icon_file = self.icon_white_path if self.current_theme == "dark" else self.icon_dark_path
@@ -232,20 +272,31 @@ class SettingsWindow(QtWidgets.QWidget):
             self.logo_label.setPixmap(pix)
             self.setWindowIcon(QtGui.QIcon(icon_file))
 
-    def _apply_theme(self, theme: str):
+    def _apply_theme(self, theme):
         self.current_theme = theme
         self._update_logo()
+        self.header_badge.theme = theme
+        self.header_badge.update()
         self.theme_switch.set_theme(theme)
         self.theme_switch.blockSignals(True)
         self.theme_switch.setChecked(theme == "dark")
         self.theme_switch.blockSignals(False)
         self.autostart_switch.set_theme(theme)
         self.setStyleSheet(stylesheet(theme))
+        c = palette(theme)
+        self.hero_arrow_badge.setStyleSheet(
+            f"QLabel#HeroArrowBadge {{ background: {c['bright']}; color: {c['button_text']}; "
+            "border-radius: 17px; font-size: 15px; font-weight: 700; }}"
+        )
         for icon in self.findChildren(LineIcon):
             icon.theme = theme
             icon.update()
         self.ready_visual.theme = theme
         self.ready_visual.update()
+        shadow_color = QtGui.QColor(28, 45, 74, 16) if theme == "light" else QtGui.QColor(0, 0, 0, 70)
+        for shadow in self._card_shadows:
+            shadow.setColor(shadow_color)
+        self.update()
 
     @staticmethod
     def _text(text, name="CardTitle"):
@@ -257,8 +308,19 @@ class SettingsWindow(QtWidgets.QWidget):
     def _card(self, parent_layout):
         card = QtWidgets.QWidget()
         card.setObjectName("CardBox")
+        if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+            shadow = QtWidgets.QGraphicsDropShadowEffect(card)
+            shadow.setBlurRadius(24)
+            shadow.setOffset(0, 6)
+            shadow.setColor(
+                QtGui.QColor(28, 45, 74, 16)
+                if self.current_theme == "light"
+                else QtGui.QColor(0, 0, 0, 70)
+            )
+            card.setGraphicsEffect(shadow)
+            self._card_shadows.append(shadow)
         layout = QtWidgets.QVBoxLayout(card)
-        layout.setContentsMargins(16, 5, 16, 5)
+        layout.setContentsMargins(18, 6, 18, 6)
         layout.setSpacing(0)
         parent_layout.addWidget(card)
         return layout
@@ -298,14 +360,14 @@ class SettingsWindow(QtWidgets.QWidget):
 
         header = QtWidgets.QHBoxLayout()
         header.setSpacing(14)
-        # Keep the original window/tray identity, with an amber in-app microphone.
         self.logo_label = QtWidgets.QLabel()
         self.logo_label.hide()
-        header.addWidget(LineIcon("mic", 38))
+        self.header_badge = _HeaderLogoBadge(self.current_theme, self)
+        header.addWidget(self.header_badge)
         titles = QtWidgets.QVBoxLayout()
         titles.setSpacing(1)
-        titles.addWidget(self._text("Dita-eu", "TitleLabel"))
         titles.addWidget(self._text("Sua voz, direto ao texto.", "SubtitleLabel"))
+        titles.addWidget(self._text("Dita-eu", "TitleLabel"))
         header.addLayout(titles, 1)
         self.theme_switch = ThemeSelector(self.current_theme == "dark", self.current_theme)
         self.theme_switch.toggled.connect(self._on_theme_switch_toggled)
@@ -320,10 +382,23 @@ class SettingsWindow(QtWidgets.QWidget):
         hero_row.addWidget(self.ready_visual)
         hero_text = QtWidgets.QVBoxLayout()
         hero_text.setSpacing(5)
-        hero_text.addWidget(self._text("Pronto para ouvir", "SectionTitle"))
+        hero_title_row = QtWidgets.QHBoxLayout()
+        hero_title_row.setContentsMargins(0, 0, 0, 0)
+        hero_title_row.setSpacing(8)
+        hero_title_row.addWidget(self._text("Pronto para ouvir", "SectionTitle"))
+        self.status_pill = QtWidgets.QLabel("● Ativo")
+        self.status_pill.setObjectName("StatusPill")
+        hero_title_row.addWidget(self.status_pill)
+        hero_title_row.addStretch()
+        hero_text.addLayout(hero_title_row)
         self.ready_hint = self._text("", "HintLabel")
         hero_text.addWidget(self.ready_hint)
         hero_row.addLayout(hero_text, 1)
+        self.hero_arrow_badge = QtWidgets.QLabel("↗")
+        self.hero_arrow_badge.setObjectName("HeroArrowBadge")
+        self.hero_arrow_badge.setFixedSize(34, 34)
+        self.hero_arrow_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        hero_row.addWidget(self.hero_arrow_badge)
         hero.addLayout(hero_row)
         self._update_shortcut_hint()
 
@@ -542,13 +617,13 @@ class SettingsWindow(QtWidgets.QWidget):
         self.config["custom_prompt"] = prompt
         self._on_field_changed()
 
-    def _on_theme_switch_toggled(self, is_dark: bool):
+    def _on_theme_switch_toggled(self, is_dark):
         new_theme = "dark" if is_dark else "light"
         self.config["theme"] = new_theme
         self._apply_theme(new_theme)
         self._save_settings(feedback=False)
 
-    def set_translation_target(self, target: str):
+    def set_translation_target(self, target):
         """Atualiza o combobox caso o usuário tenha alterado o idioma pelo menu da bandeja (tray)"""
         target = (target or "original").lower()
         self.trans_combo.blockSignals(True)
@@ -627,7 +702,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self._download_thread = thread
         thread.start()
 
-    def _on_model_downloaded(self, ok: bool, size: str):
+    def _on_model_downloaded(self, ok, size):
         self._download_thread = None
         self._refresh_local_ui()
         if ok:
@@ -667,7 +742,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.btn_reset_prompt.setText("✓ Padrão Restaurado!")
         QtCore.QTimer.singleShot(1500, lambda: self.btn_reset_prompt.setText("Restaurar Padrão"))
 
-    def _save_settings(self, feedback: bool = False):
+    def _save_settings(self, feedback=False):
         self.config["theme"] = "dark" if self.theme_switch.isChecked() else "light"
         self.config["engine"] = self.engine_combo.currentData()
         self.config["local_model_size"] = self.local_model_combo.currentData()

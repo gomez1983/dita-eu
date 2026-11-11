@@ -1,37 +1,46 @@
-"""Small native Qt drawing primitives for the amber desktop theme."""
+"""Small native Qt drawing primitives for the Payno desktop theme."""
 import math
 from PyQt5 import QtCore, QtGui, QtWidgets, QtSvg
 
 
 def palette(theme):
     if theme == "light":
-        return dict(bg="#f7f6f4", card="#ffffff", field="#faf9f7", text="#202327",
-                    muted="#62666b", border="#dededb", accent="#a83d00", bright="#c74c00",
-                    hover="#fff0e4", button_text="#ffffff")
-    return dict(bg="#141719", card="#1c2022", field="#191d1f", text="#f5f5f4",
-                muted="#b0b4b7", border="#383e41", accent="#ff9b32", bright="#ff851b",
-                hover="#30261f", button_text="#16191b")
+        return dict(bg="#eef2f7", card="#ffffff", field="#f4f7fb", text="#1a2333",
+                    muted="#64748b", border="#dce4f0", accent="#253858", bright="#2d4365",
+                    hover="#e8eef7", button_text="#ffffff")
+    return dict(bg="#0d1424", card="#162034", field="#0f172a", text="#f1f5f9",
+                muted="#94a3b8", border="#263552", accent="#60a5fa", bright="#3b66a8",
+                hover="#1e2d47", button_text="#ffffff")
 
 
 def stylesheet(theme):
     c = palette(theme)
+    if theme == "light":
+        status_pill = ("background: #e9f7ef; color: #1b7a46; border: 1px solid #ccebd9; "
+                       "border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 600;")
+    else:
+        status_pill = ("background: #112e28; color: #34d399; border: 1px solid #1f5245; "
+                       "border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 600;")
     return f"""
         QWidget {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}
-        QWidget#SettingsRoot, QDialog {{ background: {c['bg']}; }}
-        QWidget#Content {{ background: {c['bg']}; }}
+        QWidget#SettingsRoot, QWidget#Content {{ background: transparent; }}
+        QDialog {{ background: {c['bg']}; }}
         QLabel {{ background: transparent; border: none; }}
-        QLabel#TitleLabel {{ font-size: 28px; font-weight: 700; }}
+        QLabel#TitleLabel {{ font-size: 24px; font-weight: 700; }}
         QLabel#SubtitleLabel, QLabel#HintLabel, QLabel#CardDesc {{
             color: {c['muted']}; font-size: 12px; font-weight: 400;
         }}
-        QLabel#SectionTitle {{ font-size: 16px; font-weight: 650; }}
+        QLabel#SectionTitle {{ font-size: 15px; font-weight: 700; }}
         QLabel#CardTitle {{ font-size: 13px; font-weight: 600; }}
         QLabel#CardBadge {{ color: {c['accent']}; font-weight: 600; }}
+        QLabel#StatusPill {{ {status_pill} }}
         QWidget#CardBox {{ background: {c['card']}; border: 1px solid {c['border']};
-            border-radius: 12px; }}
-        QWidget#CardBox QWidget {{ background: transparent; }}
+            border-radius: 20px; }}
+        QFrame#HeroCard {{ background: {c['card']}; border: 1px solid {c['border']};
+            border-radius: 22px; }}
+        QWidget#CardBox QWidget, QFrame#HeroCard QWidget {{ background: transparent; }}
         QScrollArea {{ border: none; background: transparent; }}
-        QScrollBar:vertical {{ background: {c['bg']}; width: 7px; margin: 3px 0; }}
+        QScrollBar:vertical {{ background: transparent; width: 7px; margin: 3px 0; }}
         QScrollBar::handle:vertical {{ background: {c['border']}; border-radius: 3px; min-height: 24px; }}
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
@@ -39,7 +48,7 @@ def stylesheet(theme):
         QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QWidget#CardBox QComboBox,
         QWidget#CardBox QLineEdit, QWidget#CardBox QSpinBox, QWidget#CardBox QPlainTextEdit {{
             background: {c['field']}; border: 1px solid {c['border']};
-            border-radius: 8px; padding: 8px 10px; color: {c['text']}; selection-background-color: {c['accent']};
+            border-radius: 11px; padding: 7px 11px; color: {c['text']}; selection-background-color: {c['accent']};
         }}
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {{ border-color: {c['accent']}; }}
         QComboBox {{ padding-right: 24px; }}
@@ -49,12 +58,13 @@ def stylesheet(theme):
             selection-background-color: {c['hover']}; selection-color: {c['accent']};
             border: 1px solid {c['border']}; outline: none; }}
         QPushButton {{ background: {c['bright']}; color: {c['button_text']};
-            border: 1px solid {c['bright']}; border-radius: 9px;
-            padding: 11px 18px; font-size: 14px; font-weight: 600; }}
+            border: 1px solid {c['accent']}; border-radius: 21px;
+            padding: 11px 20px; font-size: 14px; font-weight: 600; }}
         QPushButton:hover {{ background: {c['accent']}; }}
         QPushButton:focus {{ border: 2px solid {c['text']}; }}
         QPushButton#SecondaryBtn {{ background: {c['field']}; color: {c['text']};
-            border: 1px solid {c['border']}; padding: 8px 14px; font-size: 12px; }}
+            border: 1px solid {c['border']}; border-radius: 11px; padding: 7px 14px;
+            font-size: 12px; font-weight: 600; }}
         QPushButton#SecondaryBtn:hover {{ background: {c['hover']}; border-color: {c['accent']}; }}
         QPushButton:disabled {{ color: {c['muted']}; background: {c['border']}; }}
         QSlider::groove:horizontal {{ height: 5px; background: {c['border']}; border-radius: 2px; }}
@@ -63,7 +73,7 @@ def stylesheet(theme):
             width: 13px; height: 13px; margin: -6px 0; border-radius: 8px; }}
         QSlider:focus {{ border: 1px solid {c['accent']}; border-radius: 4px; }}
         QLabel#ComboDisplay {{ background: {c['card']}; border: 1px dashed {c['accent']};
-            border-radius: 9px; padding: 14px; font-size: 18px; font-weight: 600; }}
+            border-radius: 11px; padding: 14px; font-size: 18px; font-weight: 600; }}
         QToolTip {{ background: {c['card']}; color: {c['text']}; border: 1px solid {c['border']}; }}
     """
 
@@ -93,19 +103,34 @@ _PATHS = {
 
 
 class LineIcon(QtWidgets.QWidget):
-    def __init__(self, name, size=24, parent=None):
+    def __init__(self, name, size=24, parent=None, circle=None):
         super().__init__(parent)
         self.name = name
         self.theme = "dark"
-        self.setFixedSize(size, size)
+        self.icon_size = size
+        self.circle = (size <= 30) if circle is None else bool(circle)
+        box_size = max(size, 36) if self.circle else size
+        self.setFixedSize(box_size, box_size)
 
     def paintEvent(self, event):
-        color = palette(self.theme)["accent"]
-        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-               f'fill="none" stroke="{color}" stroke-width="1.6" stroke-linecap="round" '
-               f'stroke-linejoin="round">{_PATHS[self.name]}</svg>')
+        c = palette(self.theme)
         painter = QtGui.QPainter(self)
-        QtSvg.QSvgRenderer(svg.encode()).render(painter)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        if self.circle:
+            painter.setBrush(QtGui.QColor(c["field"]))
+            painter.setPen(QtGui.QPen(QtGui.QColor(c["border"]), 1.0))
+            painter.drawEllipse(QtCore.QRectF(1, 1, self.width() - 2, self.height() - 2))
+            draw_size = min(18, self.icon_size)
+            offset_x = (self.width() - draw_size) / 2.0
+            offset_y = (self.height() - draw_size) / 2.0
+            target_rect = QtCore.QRectF(offset_x, offset_y, draw_size, draw_size)
+        else:
+            target_rect = QtCore.QRectF(0, 0, self.width(), self.height())
+        color = c["accent"]
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+               f'fill="none" stroke="{color}" stroke-width="1.7" stroke-linecap="round" '
+               f'stroke-linejoin="round">{_PATHS[self.name]}</svg>')
+        QtSvg.QSvgRenderer(svg.encode()).render(painter, target_rect)
 
 
 class ThemeSelector(QtWidgets.QAbstractButton):
@@ -131,11 +156,11 @@ class ThemeSelector(QtWidgets.QAbstractButton):
         c = palette(self.theme)
         p.setPen(QtGui.QPen(QtGui.QColor(c["accent"] if self.hasFocus() else c["border"])))
         p.setBrush(QtGui.QColor(c["field"]))
-        p.drawRoundedRect(QtCore.QRectF(1, 1, 86, 34), 11, 11)
+        p.drawRoundedRect(QtCore.QRectF(1, 1, 86, 34), 17, 17)
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(QtGui.QColor(c["bright"]))
-        p.drawRoundedRect(QtCore.QRectF(44 if self.isChecked() else 3, 3, 41, 30), 9, 9)
-        p.setFont(QtGui.QFont("Segoe UI Symbol", 16))
+        p.drawRoundedRect(QtCore.QRectF(44 if self.isChecked() else 3, 4, 41, 28), 14, 14)
+        p.setFont(QtGui.QFont("Segoe UI Symbol", 15))
         for i, symbol in enumerate(("☼", "☾")):
             selected = bool(i) == self.isChecked()
             p.setPen(QtGui.QColor(c["button_text"] if selected else c["muted"]))
@@ -186,9 +211,11 @@ class VoiceBars(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         p.setPen(QtCore.Qt.NoPen)
+        top_color, bottom_color = (("#253858", "#4f70a4") if self.theme == "light"
+                                   else ("#60a5fa", "#3b82f6"))
         gradient = QtGui.QLinearGradient(0, 0, 0, self.height())
-        gradient.setColorAt(0, QtGui.QColor(palette(self.theme)["accent"]))
-        gradient.setColorAt(1, QtGui.QColor(palette(self.theme)["bright"]))
+        gradient.setColorAt(0, QtGui.QColor(top_color))
+        gradient.setColorAt(1, QtGui.QColor(bottom_color))
         p.setBrush(gradient)
         start = (self.width() - (17 * 3 + 16 * 3)) / 2
         for i, height in enumerate(self.bar_heights()):
@@ -200,16 +227,18 @@ class ReadyVisual(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.theme = "dark"
-        self.setFixedSize(64, 64)
-        self.icon = LineIcon("mic", 27, self)
-        self.icon.move(19, 18)
+        self.setFixedSize(56, 56)
+        self.icon = LineIcon("mic", 24, self, circle=False)
+        self.icon.move(16, 16)
 
     def paintEvent(self, event):
+        self.icon.theme = self.theme
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        color = QtGui.QColor(palette(self.theme)["accent"])
-        fill = QtGui.QColor(color)
-        fill.setAlpha(18)
-        p.setBrush(fill)
-        p.setPen(QtGui.QPen(color, 1.4))
-        p.drawEllipse(QtCore.QRectF(3, 3, 58, 58))
+        c = palette(self.theme)
+        p.setBrush(QtGui.QColor(c["field"]))
+        p.setPen(QtGui.QPen(QtGui.QColor(c["border"]), 1.0))
+        p.drawRoundedRect(QtCore.QRectF(2, 2, 52, 52), 16, 16)
+        p.setBrush(QtGui.QColor("#10b981"))
+        p.setPen(QtGui.QPen(QtGui.QColor(c["card"]), 2.0))
+        p.drawEllipse(QtCore.QRectF(42, 1, 12, 12))

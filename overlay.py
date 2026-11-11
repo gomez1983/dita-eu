@@ -50,7 +50,7 @@ class FloatingHUD(QtWidgets.QWidget):
         self.bars.theme = theme
         self.bars.update()
         self.label.setStyleSheet(f"color: {palette(theme)['text']}; background: transparent; "
-                                 "font-family: 'Segoe UI'; font-size: 13px;")
+                                 "font-family: 'Segoe UI'; font-size: 13px; font-weight: 600;")
         self._update_mode_layout()
         self.update()
 
@@ -58,8 +58,9 @@ class FloatingHUD(QtWidgets.QWidget):
         capturing = self.current_state in ("recording", "transform", "idle")
         self.bars.setVisible(capturing)
         self.label.setVisible(not capturing)
+        self.layout().setContentsMargins(22 if capturing else 34, 8, 22, 8)
         self.label.ensurePolished()
-        self.setFixedSize(160 if capturing else max(160, self.label.sizeHint().width() + 48), 48)
+        self.setFixedSize(160 if capturing else max(160, self.label.sizeHint().width() + 56), 48)
         self.layout().activate()
         if self.isVisible():
             self.reposition()
@@ -68,9 +69,29 @@ class FloatingHUD(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         c = palette(self.theme)
-        p.setBrush(QtGui.QColor(c["card"]))
-        p.setPen(QtGui.QPen(QtGui.QColor(c["border"]), 1))
-        p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1), 24, 24)
+        outer = QtCore.QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        fill = (QtGui.QColor(255, 255, 255, 242) if self.theme == "light"
+                else QtGui.QColor(22, 32, 52, 242))
+        p.setBrush(fill)
+        p.setPen(QtGui.QPen(QtGui.QColor(c["border"]), 1.2))
+        p.drawRoundedRect(outer, 22.5, 22.5)
+
+        inner_alpha = 190 if self.theme == "light" else 22
+        p.setBrush(QtCore.Qt.NoBrush)
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, inner_alpha), 1.0))
+        p.drawRoundedRect(outer.adjusted(1.2, 1.2, -1.2, -1.2), 21.3, 21.3)
+
+        capturing = self.current_state in ("recording", "transform", "idle")
+        if not capturing:
+            dot_color = QtGui.QColor(c["bright"])
+            halo_color = QtGui.QColor(dot_color)
+            halo_color.setAlpha(45)
+            cy = self.height() / 2.0
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(halo_color)
+            p.drawEllipse(QtCore.QRectF(15.5, cy - 6.0, 12.0, 12.0))
+            p.setBrush(dot_color)
+            p.drawEllipse(QtCore.QRectF(18.0, cy - 3.5, 7.0, 7.0))
 
     def reposition(self):
         screen = QtGui.QGuiApplication.primaryScreen()
