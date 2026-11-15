@@ -24,7 +24,7 @@ class _HeaderLogoBadge(QtWidgets.QWidget):
         painter.drawEllipse(QtCore.QRectF(1, 1, 36, 36))
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-            'fill="none" stroke="#ffffff" stroke-width="2.0" stroke-linecap="round" '
+            f'fill="none" stroke="{c["button_text"]}" stroke-width="2.0" stroke-linecap="round" '
             'stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/>'
             '<path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg>'
         )
@@ -74,11 +74,12 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
 
+        c = palette(self.theme)
         # Trilha arredondada
         if self._offset > 0.0:
-            track_color = QtGui.QColor(palette(self.theme)["bright"])  # Azul vibrante de ativação
+            track_color = QtGui.QColor(c["bright"])
         else:
-            track_color = QtGui.QColor("#263552") if self.theme == "dark" else QtGui.QColor("#cbd5e1")
+            track_color = QtGui.QColor(c["track_off"])
 
         painter.setBrush(QtGui.QBrush(track_color))
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -88,7 +89,8 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         thumb_diameter = 18
         x = 3 + self._offset * (46 - thumb_diameter - 6)
         y = 3
-        painter.setBrush(QtGui.QBrush(QtGui.QColor("#ffffff")))
+        thumb_color = c["thumb_on"] if self._offset > 0.5 else "#ffffff"
+        painter.setBrush(QtGui.QBrush(QtGui.QColor(thumb_color)))
         if self._offset == 0.0 and self.theme == "light":
             painter.setPen(QtGui.QPen(QtGui.QColor("#94a3b8"), 1))
         else:
@@ -227,13 +229,17 @@ class _ModelDownloadThread(QtCore.QThread):
 
 class SettingsWindow(QtWidgets.QWidget):
     config_saved = QtCore.pyqtSignal(dict)
+    window_deactivated = QtCore.pyqtSignal()
+    window_hidden = QtCore.pyqtSignal()
+    collapse_to_edge_requested = QtCore.pyqtSignal()
 
-    def __init__(self, config, icon_path=None, icon_white_path=None, icon_dark_path=None):
+    def __init__(self, config, icon_path=None, icon_white_path=None, icon_dark_path=None, is_windows=None):
         super().__init__()
         self.config = config.copy()
         self.icon_white_path = icon_white_path or icon_path
         self.icon_dark_path = icon_dark_path or icon_path
-        self.current_theme = self.config.get("theme", "dark")
+        self._is_windows_platform = (sys.platform == "win32") if is_windows is None else bool(is_windows)
+        self.current_theme = config_manager.normalize_theme(self.config.get("theme", "dark"))
         self._card_shadows = []
 
         self.setWindowTitle("Dita-eu — Configurações")
@@ -255,6 +261,10 @@ class SettingsWindow(QtWidgets.QWidget):
             grad.setColorAt(0.0, QtGui.QColor(56, 90, 148, 52))
             grad.setColorAt(0.55, QtGui.QColor(92, 128, 188, 18))
             grad.setColorAt(1.0, QtGui.QColor(238, 242, 247, 0))
+        elif self.current_theme == "dark_andre":
+            grad.setColorAt(0.0, QtGui.QColor(255, 255, 255, 16))
+            grad.setColorAt(0.55, QtGui.QColor(255, 255, 255, 5))
+            grad.setColorAt(1.0, QtGui.QColor(15, 15, 15, 0))
         else:
             grad.setColorAt(0.0, QtGui.QColor(56, 107, 192, 55))
             grad.setColorAt(0.55, QtGui.QColor(30, 58, 110, 22))
@@ -262,7 +272,7 @@ class SettingsWindow(QtWidgets.QWidget):
         painter.fillRect(self.rect(), QtGui.QBrush(grad))
 
     def _update_logo(self):
-        icon_file = self.icon_white_path if self.current_theme == "dark" else self.icon_dark_path
+        icon_file = self.icon_dark_path if self.current_theme == "light" else self.icon_white_path
         if icon_file and os.path.exists(icon_file):
             pix = QtGui.QPixmap(icon_file).scaled(
                 34, 34,
@@ -273,15 +283,24 @@ class SettingsWindow(QtWidgets.QWidget):
             self.setWindowIcon(QtGui.QIcon(icon_file))
 
     def _apply_theme(self, theme):
+        theme = config_manager.normalize_theme(theme)
         self.current_theme = theme
         self._update_logo()
         self.header_badge.theme = theme
         self.header_badge.update()
         self.theme_switch.set_theme(theme)
         self.theme_switch.blockSignals(True)
-        self.theme_switch.setChecked(theme == "dark")
+        self.theme_switch.setChecked(theme in ("dark", "dark_andre"))
         self.theme_switch.blockSignals(False)
+        if hasattr(self, "theme_combo"):
+            self.theme_combo.blockSignals(True)
+            idx = self.theme_combo.findData(theme)
+            if idx >= 0:
+                self.theme_combo.setCurrentIndex(idx)
+            self.theme_combo.blockSignals(False)
         self.autostart_switch.set_theme(theme)
+        if hasattr(self, "edge_widget_switch") and self.edge_widget_switch is not None:
+            self.edge_widget_switch.set_theme(theme)
         self.setStyleSheet(stylesheet(theme))
         c = palette(theme)
         self.hero_arrow_badge.setStyleSheet(
@@ -369,7 +388,18 @@ class SettingsWindow(QtWidgets.QWidget):
         titles.addWidget(self._text("Sua voz, direto ao texto.", "SubtitleLabel"))
         titles.addWidget(self._text("Dita-eu", "TitleLabel"))
         header.addLayout(titles, 1)
-        self.theme_switch = ThemeSelector(self.current_theme == "dark", self.current_theme)
+        self.btn_collapse_edge = QtWidgets.QPushButton("«")
+        self.btn_collapse_edge.setObjectName("CollapseEdgeBtn")
+        self.btn_collapse_edge.setFixedSize(36, 36)
+        self.btn_collapse_edge.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.btn_collapse_edge.setToolTip("Recolher para a borda")
+        self.btn_collapse_edge.setAccessibleName("Recolher para a borda")
+        self.btn_collapse_edge.clicked.connect(self.collapse_to_edge_requested.emit)
+        self.btn_collapse_edge.setVisible(
+            self._is_windows_platform and bool(self.config.get("edge_widget_enabled", False))
+        )
+        header.addWidget(self.btn_collapse_edge)
+        self.theme_switch = ThemeSelector(self.current_theme in ("dark", "dark_andre"), self.current_theme)
         self.theme_switch.toggled.connect(self._on_theme_switch_toggled)
         header.addWidget(self.theme_switch)
         main_layout.addLayout(header)
@@ -405,7 +435,7 @@ class SettingsWindow(QtWidgets.QWidget):
         main_layout.addWidget(self._text("Configurações", "SectionTitle"))
         settings = self._card(main_layout)
         self.engine_combo = ComboBox()
-        self.engine_combo.setMinimumWidth(210)
+        self.engine_combo.setMinimumWidth(155)
         self.engine_combo.addItem("Groq Whisper", "groq")
         self.engine_combo.addItem("Google Gemini", "gemini")
         self.engine_combo.addItem("Local · offline", "local")
@@ -417,7 +447,7 @@ class SettingsWindow(QtWidgets.QWidget):
         local_layout = self._card(main_layout)
         self.local_card = local_layout.parentWidget()
         self.local_model_combo = ComboBox()
-        self.local_model_combo.setMinimumWidth(210)
+        self.local_model_combo.setMinimumWidth(155)
         for size, mb in local_transcriber.MODEL_SIZES.items():
             label = "Base · rápido" if size == "base" else "Small · mais preciso"
             self.local_model_combo.addItem(f"{label} (~{mb} MB)", size)
@@ -434,7 +464,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self._download_thread = None
         self._refresh_local_ui()
         self.trans_combo = ComboBox()
-        self.trans_combo.setMinimumWidth(210)
+        self.trans_combo.setMinimumWidth(155)
         for label, value in [("Original · sem tradução", "original"), ("Inglês", "en"),
                              ("Espanhol", "es"), ("Francês", "fr"), ("Alemão", "de"),
                              ("Italiano", "it"), ("Modo livre", "custom")]:
@@ -443,6 +473,15 @@ class SettingsWindow(QtWidgets.QWidget):
         index = self.trans_combo.findData(current_trans)
         self.trans_combo.setCurrentIndex(max(0, index))
         self._row(settings, "language", "Tradução", self.trans_combo, "Idioma do texto de saída")
+
+        self.theme_combo = ComboBox()
+        self.theme_combo.setMinimumWidth(155)
+        self.theme_combo.addItem("Padrão", "dark")
+        self.theme_combo.addItem("Dark André", "dark_andre")
+        self.theme_combo.addItem("Claro", "light")
+        theme_idx = self.theme_combo.findData(self.current_theme)
+        self.theme_combo.setCurrentIndex(max(0, theme_idx))
+        self._row(settings, "palette", "Tema", self.theme_combo, "Aparência da interface")
         free_mode = self._card(main_layout)
         self.custom_mode_button = QtWidgets.QPushButton()
         self.custom_mode_button.setObjectName("SecondaryBtn")
@@ -533,7 +572,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self._row(inputs, "keyboard", "Atalho de ditado", shortcut_control,
                   "Transformar seleção: " + transform_keys)
         self.mic_combo = ComboBox()
-        self.mic_combo.setFixedWidth(240)
+        self.mic_combo.setMinimumWidth(140)
+        self.mic_combo.setMaximumWidth(240)
+        self.mic_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
         self.mic_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self._populate_microphones()
         self._row(inputs, "mic", "Microfone de entrada", self.mic_combo)
@@ -542,12 +583,12 @@ class SettingsWindow(QtWidgets.QWidget):
         self.hud_spin.setValue(self.config.get("hud_bottom_offset", 350))
         self.hud_spin.setSuffix(" px")
         self.hud_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
-        self.hud_spin.setFixedWidth(100)
+        self.hud_spin.setFixedWidth(92)
         self.hud_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.hud_slider.setTracking(False)
         self.hud_slider.setRange(50, 1000)
         self.hud_slider.setValue(self.hud_spin.value())
-        self.hud_slider.setMinimumWidth(100)
+        self.hud_slider.setMinimumWidth(75)
         self.hud_slider.setMaximumWidth(160)
         self.hud_slider.setAccessibleName("Distância da pílula à base da tela")
         self.hud_slider.valueChanged.connect(self.hud_spin.setValue)
@@ -555,7 +596,7 @@ class SettingsWindow(QtWidgets.QWidget):
         position = QtWidgets.QWidget()
         position_row = QtWidgets.QHBoxLayout(position)
         position_row.setContentsMargins(0, 0, 0, 0)
-        position_row.setSpacing(12)
+        position_row.setSpacing(10)
         position_row.addWidget(self.hud_slider)
         position_row.addWidget(self.hud_spin)
         self._row(inputs, "screen", "Posição da pílula", position)
@@ -563,6 +604,60 @@ class SettingsWindow(QtWidgets.QWidget):
         self.autostart_switch.setAccessibleName("Iniciar com o Windows")
         self._row(inputs, "windows", "Iniciar com o Windows", self.autostart_switch,
                   "Executar em segundo plano ao ligar")
+
+        self.edge_widget_switch = None
+        self.edge_pos_container = None
+        self.edge_pos_group = None
+        self.edge_pos_buttons = {}
+        if self._is_windows_platform:
+            edge_enabled = bool(self.config.get("edge_widget_enabled", False))
+            edge_pos = config_manager.normalize_edge_position(
+                self.config.get("edge_widget_position", "middle")
+            )
+            self.edge_widget_switch = ToggleSwitch(self, edge_enabled, self.current_theme)
+            self.edge_widget_switch.setAccessibleName("Meia-lua na borda")
+            self._row(
+                inputs,
+                "dock",
+                "Meia-lua na borda (Windows)",
+                self.edge_widget_switch,
+                "Mostra ao encostar na borda esquerda e recolhe ao clicar fora",
+            )
+
+            self.edge_pos_container = QtWidgets.QWidget()
+            edge_pos_vbox = QtWidgets.QVBoxLayout(self.edge_pos_container)
+            edge_pos_vbox.setContentsMargins(0, 2, 0, 10)
+            edge_pos_vbox.setSpacing(8)
+
+            pos_divider = QtWidgets.QFrame()
+            pos_divider.setObjectName("Divider")
+            pos_divider.setFixedHeight(1)
+            edge_pos_vbox.addWidget(pos_divider)
+
+            pos_label = self._text("Posição na borda esquerda", "HintLabel")
+            edge_pos_vbox.addWidget(pos_label)
+
+            pos_row = QtWidgets.QHBoxLayout()
+            pos_row.setContentsMargins(0, 0, 0, 0)
+            pos_row.setSpacing(6)
+            self.edge_pos_group = QtWidgets.QButtonGroup(self)
+            self.edge_pos_group.setExclusive(True)
+            for pos_id, pos_title in (("top", "Superior"), ("middle", "Meio"), ("bottom", "Inferior")):
+                btn = QtWidgets.QPushButton(pos_title)
+                btn.setObjectName("SegmentedBtn")
+                btn.setCheckable(True)
+                btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+                btn.setChecked(pos_id == edge_pos)
+                btn.setProperty("edge_position", pos_id)
+                self.edge_pos_group.addButton(btn)
+                self.edge_pos_buttons[pos_id] = btn
+                pos_row.addWidget(btn, 1)
+            edge_pos_vbox.addLayout(pos_row)
+            inputs.addWidget(self.edge_pos_container)
+            self.edge_pos_container.setVisible(edge_enabled)
+            self.edge_widget_switch.toggled.connect(self._on_edge_widget_toggled)
+            self.edge_pos_group.buttonClicked.connect(self._on_field_changed)
+
         main_layout.addStretch()
         scroll_area.setWidget(content_widget)
         root_layout.addWidget(scroll_area, 1)
@@ -578,13 +673,15 @@ class SettingsWindow(QtWidgets.QWidget):
         self.engine_combo.currentIndexChanged.connect(self._on_field_changed)
         self.local_model_combo.currentIndexChanged.connect(self._on_field_changed)
         self.trans_combo.currentIndexChanged.connect(self._on_trans_combo_changed)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_combo_changed)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_combo_changed)
         self.custom_prompt_edit.textChanged.connect(self._on_field_changed)
         self.mic_combo.currentIndexChanged.connect(self._on_field_changed)
         self.hud_spin.valueChanged.connect(self._on_field_changed)
         self.autostart_switch.toggled.connect(self._on_field_changed)
         for widget, name in ((self.engine_combo, "Motor de transcrição"),
-                             (self.trans_combo, "Tradução"), (self.mic_combo, "Microfone de entrada"),
+                             (self.trans_combo, "Tradução"), (self.theme_combo, "Tema"),
+                             (self.mic_combo, "Microfone de entrada"),
                              (self.hud_spin, "Distância da pílula em pixels"),
                              (self.shortcut_input, "Atalho de ditado")):
             widget.setAccessibleName(name)
@@ -622,6 +719,27 @@ class SettingsWindow(QtWidgets.QWidget):
         self.config["theme"] = new_theme
         self._apply_theme(new_theme)
         self._save_settings(feedback=False)
+
+    def _on_theme_combo_changed(self):
+        new_theme = config_manager.normalize_theme(self.theme_combo.currentData())
+        self.config["theme"] = new_theme
+        self._apply_theme(new_theme)
+        self._save_settings(feedback=False)
+
+    def _on_edge_widget_toggled(self, enabled):
+        enabled = bool(enabled)
+        if self.edge_pos_container is not None:
+            self.edge_pos_container.setVisible(enabled)
+        if hasattr(self, "btn_collapse_edge"):
+            self.btn_collapse_edge.setVisible(self._is_windows_platform and enabled)
+        self._on_field_changed()
+
+    def _selected_edge_position(self) -> str:
+        if self.edge_pos_group is not None:
+            checked = self.edge_pos_group.checkedButton()
+            if checked is not None:
+                return config_manager.normalize_edge_position(checked.property("edge_position"))
+        return config_manager.normalize_edge_position(self.config.get("edge_widget_position", "middle"))
 
     def set_translation_target(self, target):
         """Atualiza o combobox caso o usuário tenha alterado o idioma pelo menu da bandeja (tray)"""
@@ -743,7 +861,7 @@ class SettingsWindow(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(1500, lambda: self.btn_reset_prompt.setText("Restaurar Padrão"))
 
     def _save_settings(self, feedback=False):
-        self.config["theme"] = "dark" if self.theme_switch.isChecked() else "light"
+        self.config["theme"] = config_manager.normalize_theme(self.current_theme)
         self.config["engine"] = self.engine_combo.currentData()
         self.config["local_model_size"] = self.local_model_combo.currentData()
         self.config["translation_target"] = self.trans_combo.currentData()
@@ -757,6 +875,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self.config["microphone_index"] = self.mic_combo.currentData()
         self.config["hud_bottom_offset"] = self.hud_spin.value()
         self.config["autostart"] = self.autostart_switch.isChecked()
+        if self._is_windows_platform and self.edge_widget_switch is not None:
+            self.config["edge_widget_enabled"] = self.edge_widget_switch.isChecked()
+            self.config["edge_widget_position"] = self._selected_edge_position()
 
         config_manager.save_config(self.config)
         config_manager.set_windows_autostart(self.config["autostart"])
@@ -767,6 +888,12 @@ class SettingsWindow(QtWidgets.QWidget):
             self.btn_save.setText("✓ Configurações Salvas!")
             QtCore.QTimer.singleShot(1500, lambda: self.btn_save.setText("Salvar configurações"))
 
+    def changeEvent(self, event):
+        if event.type() == QtCore.QEvent.Type.WindowDeactivate:
+            self.window_deactivated.emit()
+        super().changeEvent(event)
+
     def closeEvent(self, event):
+        self.window_hidden.emit()
         event.ignore()
         self.hide()

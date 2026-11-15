@@ -64,6 +64,24 @@ PRESET_PROMPTS = {
     "livre": ""
 }
 
+VALID_THEMES = ("dark", "light", "dark_andre")
+VALID_EDGE_POSITIONS = ("top", "middle", "bottom")
+
+
+def normalize_theme(raw: str) -> str:
+    value = str(raw or "dark").strip().lower()
+    if value in VALID_THEMES:
+        return value
+    return "dark"
+
+
+def normalize_edge_position(raw: str) -> str:
+    value = str(raw or "middle").strip().lower()
+    if value in VALID_EDGE_POSITIONS:
+        return value
+    return "middle"
+
+
 DEFAULT_CONFIG = {
     "engine": "groq",  # "groq" ou "gemini"
     "groq_api_key": os.getenv("GROQ_API_KEY", ""),
@@ -75,6 +93,8 @@ DEFAULT_CONFIG = {
     "hud_bottom_offset": 350,
     "theme": "dark",
     "autostart": False,
+    "edge_widget_enabled": False,
+    "edge_widget_position": "middle",
     "local_model_size": "base",  # modelo do motor offline: "base" ou "small"
     "translation_target": "original",  # "original", "en", "es", "fr", "de", "it", "custom"
     "custom_preset": "email_prytter",
@@ -125,6 +145,9 @@ def load_config() -> dict:
 
     # Sincroniza dinamicamente com o Registro real do Windows para evitar discrepancias
     config["autostart"] = is_windows_autostart_enabled()
+    config["theme"] = normalize_theme(config.get("theme", "dark"))
+    config["edge_widget_enabled"] = bool(config.get("edge_widget_enabled", False))
+    config["edge_widget_position"] = normalize_edge_position(config.get("edge_widget_position", "middle"))
 
     return config
 
@@ -137,6 +160,10 @@ def save_config(config: dict):
 
     if config.get("gemini_model") in ("gemini-flash-latest", "gemini-3.8-flash", "", None):
         config["gemini_model"] = "gemini-flash-lite-latest"
+
+    config["theme"] = normalize_theme(config.get("theme", "dark"))
+    config["edge_widget_enabled"] = bool(config.get("edge_widget_enabled", False))
+    config["edge_widget_position"] = normalize_edge_position(config.get("edge_widget_position", "middle"))
 
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:

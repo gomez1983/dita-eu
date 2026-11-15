@@ -14,8 +14,8 @@ a = Analysis(
     ],
     hiddenimports=[
         'config_manager', 'settings_ui', 'audio_recorder', 'transcriber',
-        'injector', 'overlay', 'local_transcriber', 'faster_whisper',
-        'onnxruntime', 'ctranslate2'
+        'injector', 'overlay', 'local_transcriber', 'edge_widget', 'ui_components',
+        'faster_whisper', 'onnxruntime', 'ctranslate2'
     ],
     hookspath=[],
     hooksconfig={},

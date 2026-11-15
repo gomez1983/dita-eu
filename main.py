@@ -31,6 +31,7 @@ from injector import (
 from overlay import FloatingHUD
 from settings_ui import SettingsWindow
 from ui_components import palette
+from edge_widget import EdgeWidgetService, QtWindowAdapter
 
 def get_resource_path(relative_path: str) -> str:
     if hasattr(sys, '_MEIPASS'):
@@ -141,6 +142,19 @@ class DictationApp(QtCore.QObject):
         )
         self.settings_window.config_saved.connect(self._on_config_updated)
 
+        self._edge_blur_timer = QtCore.QTimer(self)
+        self._edge_blur_timer.setInterval(50)
+        self._edge_blur_timer.timeout.connect(self._poll_edge_outside_interaction)
+
+        self.edge_widget = EdgeWidgetService(
+            QtWindowAdapter(self.settings_window),
+            on_expanded_changed=self._on_edge_expanded_changed,
+        )
+        self.settings_window.window_deactivated.connect(self._on_settings_deactivated)
+        self.settings_window.window_hidden.connect(self.edge_widget.mark_hidden)
+        self.settings_window.collapse_to_edge_requested.connect(self.edge_widget.collapse_to_edge)
+        self._sync_edge_widget_config()
+
         self.tray_lang_actions = {}
         self._setup_tray_icon()
 
@@ -240,7 +254,46 @@ class DictationApp(QtCore.QObject):
         if reason in (QtWidgets.QSystemTrayIcon.ActivationReason.DoubleClick, QtWidgets.QSystemTrayIcon.ActivationReason.Trigger):
             self.show_settings()
 
+    def _sync_edge_widget_config(self):
+        if sys.platform != "win32":
+            return
+        self.edge_widget.configure(
+            enabled=bool(self.config.get("edge_widget_enabled", False)),
+            position=self.config.get("edge_widget_position", "middle"),
+            theme=self.config.get("theme", "dark"),
+            active=True,
+        )
+
+    def _on_edge_expanded_changed(self, expanded: bool):
+        if self._shutting_down:
+            self._edge_blur_timer.stop()
+            return
+        if expanded and self.edge_widget.is_enabled:
+            if not self._edge_blur_timer.isActive():
+                self._edge_blur_timer.start()
+        else:
+            self._edge_blur_timer.stop()
+
+    def _poll_edge_outside_interaction(self):
+        if self._shutting_down or not self.edge_widget.is_enabled:
+            self._edge_blur_timer.stop()
+            return
+        self.edge_widget.check_outside_interaction()
+
+    def _on_settings_deactivated(self):
+        if self._shutting_down or not self.edge_widget.is_enabled:
+            return
+        QtCore.QTimer.singleShot(30, self._check_settings_blur)
+
+    def _check_settings_blur(self):
+        if self._shutting_down:
+            return
+        self.edge_widget.handle_window_blur()
+
     def show_settings(self):
+        if self.edge_widget.is_enabled:
+            self.edge_widget.open_expanded_from_edge()
+            return
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
@@ -250,6 +303,7 @@ class DictationApp(QtCore.QObject):
         self.hud.bottom_offset = self.config.get("hud_bottom_offset", 350)
         self.hud.set_theme(self.config.get("theme", "dark"))
         self._apply_tray_theme()
+        self._sync_edge_widget_config()
         
         target_lang = self.config.get("translation_target", "original")
         self.hud.set_translation_target(target_lang)
@@ -636,6 +690,10 @@ class DictationApp(QtCore.QObject):
                 self._transform_session.released.set()
         if self.keyboard_listener:
             self.keyboard_listener.stop()
+        if hasattr(self, "_edge_blur_timer"):
+            self._edge_blur_timer.stop()
+        if hasattr(self, "edge_widget") and self.edge_widget is not None:
+            self.edge_widget.shutdown()
         self.tray_icon.hide()
         self.q_app.quit()
 

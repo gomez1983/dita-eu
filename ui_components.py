@@ -5,22 +5,37 @@ from PyQt5 import QtCore, QtGui, QtWidgets, QtSvg
 
 def palette(theme):
     if theme == "light":
-        return dict(bg="#eef2f7", card="#ffffff", field="#f4f7fb", text="#1a2333",
-                    muted="#64748b", border="#dce4f0", accent="#253858", bright="#2d4365",
-                    hover="#e8eef7", button_text="#ffffff")
-    return dict(bg="#0d1424", card="#162034", field="#0f172a", text="#f1f5f9",
-                muted="#94a3b8", border="#263552", accent="#60a5fa", bright="#3b66a8",
-                hover="#1e2d47", button_text="#ffffff")
+        return dict(
+            bg="#eef2f7", card="#ffffff", field="#f4f7fb", text="#1a2333",
+            muted="#64748b", border="#dce4f0", accent="#253858", bright="#2d4365",
+            hover="#e8eef7", button_text="#ffffff", button_hover="#253858",
+            status_bg="#e9f7ef", status_fg="#1b7a46", status_border="#ccebd9",
+            track_off="#cbd5e1", thumb_on="#ffffff",
+        )
+    if theme == "dark_andre":
+        return dict(
+            bg="#0F0F0F", card="#1E1E1D", field="#262625", text="#F2F2EF",
+            muted="#B4B4AF", border="#2E2E2D", accent="#EFEFEC", bright="#EFEFEC",
+            hover="#2C2C2B", button_text="#141414", button_hover="#D6D6D2",
+            status_bg="#132613", status_fg="#38BC37", status_border="#244A24",
+            track_off="#262625", thumb_on="#141414",
+        )
+    return dict(
+        bg="#0d1424", card="#162034", field="#0f172a", text="#f1f5f9",
+        muted="#94a3b8", border="#263552", accent="#60a5fa", bright="#3b66a8",
+        hover="#1e2d47", button_text="#ffffff", button_hover="#60a5fa",
+        status_bg="#112e28", status_fg="#34d399", status_border="#1f5245",
+        track_off="#263552", thumb_on="#ffffff",
+    )
 
 
 def stylesheet(theme):
     c = palette(theme)
-    if theme == "light":
-        status_pill = ("background: #e9f7ef; color: #1b7a46; border: 1px solid #ccebd9; "
-                       "border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 600;")
-    else:
-        status_pill = ("background: #112e28; color: #34d399; border: 1px solid #1f5245; "
-                       "border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 600;")
+    status_pill = (
+        f"background: {c['status_bg']}; color: {c['status_fg']}; "
+        f"border: 1px solid {c['status_border']}; "
+        "border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 600;"
+    )
     return f"""
         QWidget {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}
         QWidget#SettingsRoot, QWidget#Content {{ background: transparent; }}
@@ -60,12 +75,22 @@ def stylesheet(theme):
         QPushButton {{ background: {c['bright']}; color: {c['button_text']};
             border: 1px solid {c['accent']}; border-radius: 21px;
             padding: 11px 20px; font-size: 14px; font-weight: 600; }}
-        QPushButton:hover {{ background: {c['accent']}; }}
+        QPushButton:hover {{ background: {c['button_hover']}; }}
         QPushButton:focus {{ border: 2px solid {c['text']}; }}
         QPushButton#SecondaryBtn {{ background: {c['field']}; color: {c['text']};
             border: 1px solid {c['border']}; border-radius: 11px; padding: 7px 14px;
             font-size: 12px; font-weight: 600; }}
         QPushButton#SecondaryBtn:hover {{ background: {c['hover']}; border-color: {c['accent']}; }}
+        QPushButton#CollapseEdgeBtn {{ background: {c['field']}; color: {c['text']};
+            border: 1px solid {c['border']}; border-radius: 18px;
+            padding: 0px; font-size: 15px; font-weight: 700; }}
+        QPushButton#CollapseEdgeBtn:hover {{ background: {c['hover']}; border-color: {c['accent']}; }}
+        QPushButton#SegmentedBtn {{ background: transparent; color: {c['muted']};
+            border: 1px solid {c['border']}; border-radius: 9px; padding: 6px 10px;
+            font-size: 12px; font-weight: 500; }}
+        QPushButton#SegmentedBtn:hover {{ background: {c['hover']}; color: {c['text']}; }}
+        QPushButton#SegmentedBtn:checked {{ background: {c['field']}; color: {c['text']};
+            border: 1.5px solid {c['accent']}; font-weight: 700; }}
         QPushButton:disabled {{ color: {c['muted']}; background: {c['border']}; }}
         QSlider::groove:horizontal {{ height: 5px; background: {c['border']}; border-radius: 2px; }}
         QSlider::sub-page:horizontal {{ background: {c['bright']}; border-radius: 2px; }}
@@ -99,6 +124,8 @@ _PATHS = {
     "keyboard": '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M5 9h1m3 0h1m3 0h1m3 0h1M5 12h1m3 0h1m3 0h1m3 0h1M7 16h10"/>',
     "screen": '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M12 17v4M7 21h10"/>',
     "windows": '<path d="M3 5l8-1v8H3ZM14 3l8-1v10h-8ZM3 14h8v7l-8-1ZM14 14h8v10l-8-2Z"/>',
+    "palette": '<circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.2"/><circle cx="13" cy="8.5" r="1.2"/><circle cx="15.5" cy="12" r="1.2"/>',
+    "dock": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M13 10l2 2-2 2"/>',
 }
 
 
@@ -211,8 +238,12 @@ class VoiceBars(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         p.setPen(QtCore.Qt.NoPen)
-        top_color, bottom_color = (("#253858", "#4f70a4") if self.theme == "light"
-                                   else ("#60a5fa", "#3b82f6"))
+        if self.theme == "light":
+            top_color, bottom_color = ("#253858", "#4f70a4")
+        elif self.theme == "dark_andre":
+            top_color, bottom_color = ("#EFEFEC", "#8E8E89")
+        else:
+            top_color, bottom_color = ("#60a5fa", "#3b82f6")
         gradient = QtGui.QLinearGradient(0, 0, 0, self.height())
         gradient.setColorAt(0, QtGui.QColor(top_color))
         gradient.setColorAt(1, QtGui.QColor(bottom_color))
@@ -239,6 +270,6 @@ class ReadyVisual(QtWidgets.QWidget):
         p.setBrush(QtGui.QColor(c["field"]))
         p.setPen(QtGui.QPen(QtGui.QColor(c["border"]), 1.0))
         p.drawRoundedRect(QtCore.QRectF(2, 2, 52, 52), 16, 16)
-        p.setBrush(QtGui.QColor("#10b981"))
+        p.setBrush(QtGui.QColor(c["status_fg"]))
         p.setPen(QtGui.QPen(QtGui.QColor(c["card"]), 2.0))
         p.drawEllipse(QtCore.QRectF(42, 1, 12, 12))

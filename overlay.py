@@ -70,8 +70,12 @@ class FloatingHUD(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         c = palette(self.theme)
         outer = QtCore.QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
-        fill = (QtGui.QColor(255, 255, 255, 242) if self.theme == "light"
-                else QtGui.QColor(22, 32, 52, 242))
+        if self.theme == "light":
+            fill = QtGui.QColor(255, 255, 255, 242)
+        elif self.theme == "dark_andre":
+            fill = QtGui.QColor(26, 26, 25, 245)
+        else:
+            fill = QtGui.QColor(22, 32, 52, 242)
         p.setBrush(fill)
         p.setPen(QtGui.QPen(QtGui.QColor(c["border"]), 1.2))
         p.drawRoundedRect(outer, 22.5, 22.5)
