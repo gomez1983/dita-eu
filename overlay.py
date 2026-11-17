@@ -1,6 +1,6 @@
 import ctypes
 from PyQt5 import QtCore, QtGui, QtWidgets
-from ui_components import VoiceBars, palette
+from ui_components import VoiceBars, font_family, palette
 
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
@@ -50,7 +50,7 @@ class FloatingHUD(QtWidgets.QWidget):
         self.bars.theme = theme
         self.bars.update()
         self.label.setStyleSheet(f"color: {palette(theme)['text']}; background: transparent; "
-                                 "font-family: 'Segoe UI'; font-size: 13px; font-weight: 600;")
+                                 f"font-family: '{font_family('body')}'; font-size: 13px; font-weight: 600;")
         self._update_mode_layout()
         self.update()
 
@@ -72,12 +72,15 @@ class FloatingHUD(QtWidgets.QWidget):
         outer = QtCore.QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
         if self.theme == "light":
             fill = QtGui.QColor(255, 255, 255, 242)
+            border = QtGui.QColor(203, 213, 225)  # contorno nítido sobre qualquer janela
         elif self.theme == "dark_andre":
             fill = QtGui.QColor(26, 26, 25, 245)
+            border = QtGui.QColor(c["border"])
         else:
-            fill = QtGui.QColor(22, 32, 52, 242)
+            fill = QtGui.QColor(10, 14, 22, 244)  # Obsidian Whisper: camada mais profunda
+            border = QtGui.QColor(56, 189, 248, 72)  # contorno ciano suave
         p.setBrush(fill)
-        p.setPen(QtGui.QPen(QtGui.QColor(c["border"]), 1.2))
+        p.setPen(QtGui.QPen(border, 1.2))
         p.drawRoundedRect(outer, 22.5, 22.5)
 
         inner_alpha = 190 if self.theme == "light" else 22

@@ -10,6 +10,7 @@ a = Analysis(
         ('icon.png', '.'),
         ('icon_white.png', '.'),
         ('radio-mic.svg', '.'),
+        ('fonts', 'fonts'),
         ('venv/Lib/site-packages/faster_whisper/assets', 'faster_whisper/assets')
     ],
     hiddenimports=[

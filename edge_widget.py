@@ -126,6 +126,29 @@ def argb(alpha: int, red: int, green: int, blue: int) -> int:
     return ((a & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF)
 
 
+def half_moon_palette(theme: str, hover: float) -> dict:
+    """Cores RGB da meia-lua por tema; ``hover`` (0..1) clareia o corpo ao passar o mouse."""
+    name = str(theme or "dark").lower()
+    h = clamp(hover, 0.0, 1.0)
+    if name == "light":  # Fluent Clarity: corpo branco e seta azul
+        return {
+            "body": (round(255 - 14 * h), round(255 - 12 * h), round(255 - 8 * h)),
+            "border": (15, 23, 42), "border_alpha": 45,
+            "ink": (37, 99, 235), "text": (71, 85, 105),
+        }
+    if name == "dark_andre":  # André Dark Minimal: neutros quentes
+        return {
+            "body": (round(26 + 22 * h), round(26 + 22 * h), round(25 + 22 * h)),
+            "border": (255, 255, 255), "border_alpha": 65,
+            "ink": (242, 242, 239), "text": (220, 220, 215),
+        }
+    return {  # Obsidian Whisper: corpo azul-petróleo profundo e seta ciano
+        "body": (round(13 + 18 * h), round(18 + 22 * h), round(28 + 26 * h)),
+        "border": (142, 213, 255), "border_alpha": 70,
+        "ink": (142, 213, 255), "text": (189, 200, 209),
+    }
+
+
 def compute_half_moon_rect_physical(
     work_rect: tuple[int, int, int, int],
     position: str,
@@ -435,6 +458,7 @@ class NativeEdgeHalfMoon:
         self._enabled = False
         self._position = "middle"
         self._is_dark = True
+        self._theme_name = "dark"
         self._is_active = True
         self._main_expanded = False
 
@@ -525,6 +549,7 @@ class NativeEdgeHalfMoon:
         self._enabled = bool(enabled)
         self._position = str(position or "middle").lower()
         self._is_dark = (str(theme or "dark").lower() != "light")
+        self._theme_name = str(theme or "dark").lower()
         self._is_active = bool(active)
         if main_expanded is not None:
             self._main_expanded = bool(main_expanded)
@@ -792,32 +817,17 @@ class NativeEdgeHalfMoon:
             gdiplus.GdipAddPathArc(bp, -shape_w, shape_y, shape_w * 2.0, shape_h, -90.0, 180.0)
             gdiplus.GdipClosePathFigure(bp)
 
+            colors = half_moon_palette(self._theme_name, eased_hover)
             base_alpha = int(round((220.0 + 25.0 * eased_hover) * eased_reveal))
-            if self._is_dark:
-                fill_argb = argb(
-                    base_alpha,
-                    int(round(26.0 + 22.0 * eased_hover)),
-                    int(round(26.0 + 22.0 * eased_hover)),
-                    int(round(25.0 + 22.0 * eased_hover)),
-                )
-            else:
-                fill_argb = argb(
-                    base_alpha,
-                    int(round(247.0 - 16.0 * eased_hover)),
-                    int(round(247.0 - 16.0 * eased_hover)),
-                    int(round(246.0 - 16.0 * eased_hover)),
-                )
+            fill_argb = argb(base_alpha, *colors["body"])
             gdiplus.GdipCreateSolidFill(fill_argb, ctypes.byref(bb))
             gdiplus.GdipFillPath(g, bb, bp)
             gdiplus.GdipDeleteBrush(bb)
             gdiplus.GdipDeletePath(bp)
 
             # Contorno sutil ao longo do arco
-            border_alpha = int(round((65.0 if self._is_dark else 45.0) * eased_reveal))
-            border_argb = (
-                argb(border_alpha, 255, 255, 255) if self._is_dark
-                else argb(border_alpha, 20, 20, 20)
-            )
+            border_alpha = int(round(colors["border_alpha"] * eased_reveal))
+            border_argb = argb(border_alpha, *colors["border"])
             bpen = ctypes.c_void_p()
             gdiplus.GdipCreatePen1(border_argb, float(1.1 * scale), UNIT_PIXEL, ctypes.byref(bpen))
             gdiplus.GdipDrawArc(g, bpen, -shape_w, shape_y, shape_w * 2.0, shape_h, -90.0, 180.0)
@@ -846,10 +856,7 @@ class NativeEdgeHalfMoon:
                 cy = shape_y + shape_h * 0.52
                 arm = float((4.2 + 0.8 * eased_hover) * scale)
                 chevron_alpha = int(round((190.0 + 65.0 * eased_hover) * content_alpha_f))
-                ink_argb = (
-                    argb(chevron_alpha, 242, 242, 239) if self._is_dark
-                    else argb(chevron_alpha, 20, 20, 20)
-                )
+                ink_argb = argb(chevron_alpha, *colors["ink"])
                 cpen = ctypes.c_void_p()
                 gdiplus.GdipCreatePen1(ink_argb, float(1.9 * scale), UNIT_PIXEL, ctypes.byref(cpen))
                 gdiplus.GdipSetPenStartCap(cpen, LINE_CAP_ROUND)
@@ -865,10 +872,7 @@ class NativeEdgeHalfMoon:
 
                 # Pequena sigla "DE" discreta na parte inferior da meia-lua
                 text_alpha = int(round((155.0 + 80.0 * eased_hover) * content_alpha_f))
-                text_argb = (
-                    argb(text_alpha, 220, 220, 215) if self._is_dark
-                    else argb(text_alpha, 65, 65, 64)
-                )
+                text_argb = argb(text_alpha, *colors["text"])
                 family = ctypes.c_void_p()
                 font = ctypes.c_void_p()
                 fmt = ctypes.c_void_p()

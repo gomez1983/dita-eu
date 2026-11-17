@@ -88,7 +88,7 @@ Muitas ferramentas de ditado são lentas, exigem navegadores abertos, colam dado
 ## 🛠️ Tecnologias Utilizadas
 
 - **Linguagem**: Python 3.10+
-- **Interface Gráfica**: PyQt5 (com suporte nativo a temas Dark/Light e animações em Toggle Switch)
+- **Interface Gráfica**: PyQt5 (temas Padrão, Dark André e Claro baseados no design do Stitch, fontes Inter, JetBrains Mono e Plus Jakarta Sans embutidas em `fonts/` com fallback para Segoe UI, e animações em Toggle Switch)
 - **Captura de Áudio**: `sounddevice`, `numpy`, `scipy` (PCM 16kHz em memória, zero I/O de disco)
 - **Hooks Globais de Teclado**: `pynput` (captura não-bloqueante de atalhos e combos simultâneos)
 - **Automação Win32**: `pywin32` (`keybd_event`, manipulação nativa de clipboard e flags de janela `WS_EX_NOACTIVATE`)
@@ -181,14 +181,17 @@ dita-eu/
 ├── main.py                    # Ponto de entrada, listeners de atalhos (F8 e Shift+F8) e System Tray
 ├── overlay.py                 # Pílula flutuante minimalista com feedback de pulso e badges de estado
 ├── runtime_diagnostics.py     # Log operacional rotativo, sem áudio, transcrições ou credenciais
-├── settings_ui.py             # Interface gráfica com Toggle Switches modernos e seletores
+├── settings_ui.py             # Interface gráfica: cards, chips de idioma e personalidade, layout responsivo
+├── ui_components.py           # Tokens dos temas (paletas e tipografia) e componentes desenhados em Qt
 ├── transcriber.py             # Clientes Groq e Gemini com pipeline de ditado, tradução e Voice Transform
 ├── icon.ico                   # Ícone para executável e barra de tarefas do Windows
 ├── icon.png                   # Logotipo escuro para Modo Claro
 ├── icon_white.png             # Logotipo claro para Modo Escuro
 ├── radio-mic.svg              # Vetor original
+├── fonts/                     # Fontes embutidas (Inter, JetBrains Mono, Plus Jakarta Sans) e licenças
 ├── FEATURE_VOICE_TRANSFORM.md # Especificação técnica detalhada da funcionalidade Voice Transform
-├── tests/                     # Suíte de testes unitários automatizados (engines, hotkeys, HUD, injector)
+├── tests/                     # Suíte de testes unitários automatizados (engines, hotkeys, HUD, injector, UI)
+├── tools/preview_ui.py        # Gera previews da UI (temas e tamanhos) em output/ui-preview, sem ditar
 ├── requirements.txt           # Dependências mínimas de produção
 ├── .env.example               # Modelo de variáveis de ambiente
 ├── .gitignore                 # Proteção contra vazamento de chaves e builds

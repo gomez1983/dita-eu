@@ -1,15 +1,21 @@
 import os
+import re
 import sys
 import sounddevice as sd
-from PyQt5 import QtCore, QtGui, QtWidgets, QtSvg
+from PyQt5 import QtCore, QtGui, QtWidgets
 from pynput import keyboard
 
 import config_manager
 import local_transcriber
-from ui_components import ComboBox, LineIcon, ReadyVisual, ThemeSelector, palette, stylesheet
+from ui_components import (AdaptiveGrid, ChoiceGroup, ComboBox, FlowLayout, HeroCard, LineIcon,
+                           OptionCard, ReadyVisual, ThemeSelector, effects, font_family, mix,
+                           palette, stylesheet)
 
 
 class _HeaderLogoBadge(QtWidgets.QWidget):
+    """Logotipo do cabeçalho: ladrilho arredondado com barras de áudio."""
+    _themed = True
+
     def __init__(self, theme="dark", parent=None):
         super().__init__(parent)
         self.theme = theme
@@ -19,27 +25,29 @@ class _HeaderLogoBadge(QtWidgets.QWidget):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         c = palette(self.theme)
+        tile = QtGui.QColor(c["bright"])
+        tile.setAlpha(46)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.setBrush(QtGui.QColor(c["bright"]))
-        painter.drawEllipse(QtCore.QRectF(1, 1, 36, 36))
-        svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-            f'fill="none" stroke="{c["button_text"]}" stroke-width="2.0" stroke-linecap="round" '
-            'stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/>'
-            '<path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg>'
-        )
-        QtSvg.QSvgRenderer(svg.encode()).render(painter, QtCore.QRectF(9, 9, 20, 20))
+        painter.setBrush(tile)
+        painter.drawRoundedRect(QtCore.QRectF(1, 1, 36, 36), 10, 10)
+        painter.setBrush(QtGui.QColor(c["accent"]))
+        heights = (8, 14, 20, 12, 6)
+        start = 19 - (len(heights) * 3 + (len(heights) - 1) * 3) / 2.0
+        for i, height in enumerate(heights):
+            painter.drawRoundedRect(QtCore.QRectF(start + i * 6, 19 - height / 2.0, 3, height), 1.5, 1.5)
 
 
 class ToggleSwitch(QtWidgets.QAbstractButton):
     """Toggle switch moderno e minimalista estilo iOS / Windows 11 Settings"""
+    _themed = True
+
     def __init__(self, parent=None, checked=False, theme="dark"):
         super().__init__(parent)
         self.setCheckable(True)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setChecked(checked)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(46, 24)
+        self.setFixedSize(44, 24)
         self.theme = theme
 
         self._offset = 1.0 if checked else 0.0
@@ -75,20 +83,16 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
 
         c = palette(self.theme)
-        # Trilha arredondada
-        if self._offset > 0.0:
-            track_color = QtGui.QColor(c["bright"])
-        else:
-            track_color = QtGui.QColor(c["track_off"])
-
+        # Trilha arredondada: acompanha a animação entre desligado e ligado.
+        track_color = mix(c["track_off"], c["bright"], self._offset)
         painter.setBrush(QtGui.QBrush(track_color))
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(0, 0, 46, 24, 12, 12)
+        painter.drawRoundedRect(0, 0, 44, 24, 12, 12)
 
         # Círculo deslizante (Thumb)
-        thumb_diameter = 18
-        x = 3 + self._offset * (46 - thumb_diameter - 6)
-        y = 3
+        thumb_diameter = 20
+        x = 2 + self._offset * (44 - thumb_diameter - 4)
+        y = 2
         thumb_color = c["thumb_on"] if self._offset > 0.5 else "#ffffff"
         painter.setBrush(QtGui.QBrush(QtGui.QColor(thumb_color)))
         if self._offset == 0.0 and self.theme == "light":
@@ -128,7 +132,7 @@ class KeyRecorderDialog(QtWidgets.QDialog):
         self.btn_cancel = QtWidgets.QPushButton("Cancelar")
         self.btn_cancel.setObjectName("SecondaryBtn")
         self.btn_cancel.clicked.connect(self.reject)
-        
+
         self.btn_ok = QtWidgets.QPushButton("Confirmar")
         self.btn_ok.setObjectName("PrimaryBtn")
         self.btn_ok.setEnabled(False)
@@ -233,6 +237,14 @@ class SettingsWindow(QtWidgets.QWidget):
     window_hidden = QtCore.pyqtSignal()
     collapse_to_edge_requested = QtCore.pyqtSignal()
 
+    # Duas colunas só em janela larga; a meia-lua (420–440 px) usa uma coluna.
+    WIDE_BREAKPOINT = 980
+    COMPACT_BREAKPOINT = 560
+    LANGUAGE_LABELS = {
+        "original": "Original", "en": "Inglês", "es": "Espanhol", "fr": "Francês",
+        "de": "Alemão", "it": "Italiano", "custom": "✦ Modo livre",
+    }
+
     def __init__(self, config, icon_path=None, icon_white_path=None, icon_dark_path=None, is_windows=None):
         super().__init__()
         self.config = config.copy()
@@ -241,6 +253,9 @@ class SettingsWindow(QtWidgets.QWidget):
         self._is_windows_platform = (sys.platform == "win32") if is_windows is None else bool(is_windows)
         self.current_theme = config_manager.normalize_theme(self.config.get("theme", "dark"))
         self._card_shadows = []
+        self._wide_layout = False
+        self._compact_layout = False
+        self._ui_ready = False
 
         self.setWindowTitle("Dita-eu — Configurações")
         self.setObjectName("SettingsRoot")
@@ -250,26 +265,17 @@ class SettingsWindow(QtWidgets.QWidget):
 
         self._setup_ui()
         self._apply_theme(self.current_theme)
+        self._ui_ready = True
+        self._apply_responsive(force=True)
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QtGui.QColor(palette(self.current_theme)["bg"]))
 
-        grad = QtGui.QRadialGradient(self.width() * 0.42, 0.0, self.width() * 0.65)
-        if self.current_theme == "light":
-            grad.setColorAt(0.0, QtGui.QColor(56, 90, 148, 52))
-            grad.setColorAt(0.55, QtGui.QColor(92, 128, 188, 18))
-            grad.setColorAt(1.0, QtGui.QColor(238, 242, 247, 0))
-        elif self.current_theme == "dark_andre":
-            grad.setColorAt(0.0, QtGui.QColor(255, 255, 255, 16))
-            grad.setColorAt(0.55, QtGui.QColor(255, 255, 255, 5))
-            grad.setColorAt(1.0, QtGui.QColor(15, 15, 15, 0))
-        else:
-            grad.setColorAt(0.0, QtGui.QColor(56, 107, 192, 55))
-            grad.setColorAt(0.55, QtGui.QColor(30, 58, 110, 22))
-            grad.setColorAt(1.0, QtGui.QColor(13, 20, 36, 0))
-        painter.fillRect(self.rect(), QtGui.QBrush(grad))
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._ui_ready:
+            self._apply_responsive()
 
     def _update_logo(self):
         icon_file = self.icon_dark_path if self.current_theme == "light" else self.icon_white_path
@@ -286,9 +292,6 @@ class SettingsWindow(QtWidgets.QWidget):
         theme = config_manager.normalize_theme(theme)
         self.current_theme = theme
         self._update_logo()
-        self.header_badge.theme = theme
-        self.header_badge.update()
-        self.theme_switch.set_theme(theme)
         self.theme_switch.blockSignals(True)
         self.theme_switch.setChecked(theme in ("dark", "dark_andre"))
         self.theme_switch.blockSignals(False)
@@ -298,99 +301,180 @@ class SettingsWindow(QtWidgets.QWidget):
             if idx >= 0:
                 self.theme_combo.setCurrentIndex(idx)
             self.theme_combo.blockSignals(False)
-        self.autostart_switch.set_theme(theme)
-        if hasattr(self, "edge_widget_switch") and self.edge_widget_switch is not None:
-            self.edge_widget_switch.set_theme(theme)
         self.setStyleSheet(stylesheet(theme))
-        c = palette(theme)
-        self.hero_arrow_badge.setStyleSheet(
-            f"QLabel#HeroArrowBadge {{ background: {c['bright']}; color: {c['button_text']}; "
-            "border-radius: 17px; font-size: 15px; font-weight: 700; }}"
-        )
-        for icon in self.findChildren(LineIcon):
-            icon.theme = theme
-            icon.update()
-        self.ready_visual.theme = theme
-        self.ready_visual.update()
-        shadow_color = QtGui.QColor(28, 45, 74, 16) if theme == "light" else QtGui.QColor(0, 0, 0, 70)
+        for widget in self.findChildren(QtWidgets.QWidget):
+            if getattr(widget, "_themed", False):
+                widget.theme = theme
+                widget.update()
+        shadow_color = effects(theme)["shadow"]
         for shadow in self._card_shadows:
             shadow.setColor(shadow_color)
         self.update()
 
+    # --- Blocos reutilizáveis ----------------------------------------------
+
     @staticmethod
-    def _text(text, name="CardTitle"):
+    def _text(text, name="CardTitle", wrap=True):
         label = QtWidgets.QLabel(text)
         label.setObjectName(name)
-        label.setWordWrap(True)
+        label.setWordWrap(wrap)
         return label
 
-    def _card(self, parent_layout):
+    def _field_label(self, text):
+        return self._text(text.upper(), "FieldLabel", wrap=False)
+
+    def _kbd(self, text):
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("Kbd")
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        return label
+
+    def _add_shadow(self, card):
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return
+        shadow = QtWidgets.QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(22)
+        shadow.setOffset(0, 5)
+        shadow.setColor(effects(self.current_theme)["shadow"])
+        card.setGraphicsEffect(shadow)
+        self._card_shadows.append(shadow)
+
+    def _make_card(self, title, subtitle, icon):
+        """Card com cabeçalho (ícone, título, descrição) e um layout para o corpo."""
         card = QtWidgets.QWidget()
         card.setObjectName("CardBox")
-        if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
-            shadow = QtWidgets.QGraphicsDropShadowEffect(card)
-            shadow.setBlurRadius(24)
-            shadow.setOffset(0, 6)
-            shadow.setColor(
-                QtGui.QColor(28, 45, 74, 16)
-                if self.current_theme == "light"
-                else QtGui.QColor(0, 0, 0, 70)
-            )
-            card.setGraphicsEffect(shadow)
-            self._card_shadows.append(shadow)
-        layout = QtWidgets.QVBoxLayout(card)
-        layout.setContentsMargins(18, 6, 18, 6)
-        layout.setSpacing(0)
-        parent_layout.addWidget(card)
-        return layout
+        self._add_shadow(card)
+        outer = QtWidgets.QVBoxLayout(card)
+        outer.setContentsMargins(20, 18, 20, 20)
+        outer.setSpacing(14)
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(12)
+        head.addWidget(LineIcon(icon, 20, tile=36), 0, QtCore.Qt.AlignTop)
+        texts = QtWidgets.QVBoxLayout()
+        texts.setSpacing(2)
+        texts.addWidget(self._text(title, "CardHeading"))
+        texts.addWidget(self._text(subtitle, "CardDesc"))
+        head.addLayout(texts, 1)
+        outer.addLayout(head)
+        body = QtWidgets.QVBoxLayout()
+        body.setSpacing(12)
+        outer.addLayout(body)
+        return card, body
 
-    def _row(self, layout, icon, title, control, hint=None):
-        if layout.count():
-            divider = QtWidgets.QFrame()
-            divider.setObjectName("Divider")
-            divider.setFixedHeight(1)
-            layout.addWidget(divider)
-        row = QtWidgets.QHBoxLayout()
-        row.setContentsMargins(0, 10, 0, 10)
-        row.setSpacing(14)
-        row.addWidget(LineIcon(icon, 23))
-        text = QtWidgets.QVBoxLayout()
-        text.setSpacing(3)
-        text.addWidget(self._text(title))
+    def _inner_card(self, margins=(14, 12, 14, 12), spacing=10):
+        box = QtWidgets.QWidget()
+        box.setObjectName("InnerCard")
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(*margins)
+        layout.setSpacing(spacing)
+        return box, layout
+
+    def _setting_row(self, icon, title, hint, control, extra=None):
+        """Linha de configuração: ícone, título, descrição e controle à direita."""
+        box, layout = self._inner_card()
+        top = QtWidgets.QHBoxLayout()
+        top.setSpacing(12)
+        top.addWidget(LineIcon(icon, 20), 0, QtCore.Qt.AlignTop)
+        texts = QtWidgets.QVBoxLayout()
+        texts.setSpacing(2)
+        texts.addWidget(self._text(title, "CardTitle"))
         if hint:
-            text.addWidget(self._text(hint, "HintLabel"))
-        row.addLayout(text, 1)
-        row.addWidget(control)
+            texts.addWidget(self._text(hint, "HintLabel"))
+        top.addLayout(texts, 1)
+        top.addWidget(control, 0, QtCore.Qt.AlignVCenter)
+        layout.addLayout(top)
+        if extra is not None:
+            layout.addWidget(extra)
+        return box
+
+    def _hotkey_badge(self, label, description, kbd):
+        box, layout = self._inner_card((14, 10, 14, 10))
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(12)
+        texts = QtWidgets.QVBoxLayout()
+        texts.setSpacing(1)
+        texts.addWidget(self._text(label, "HintLabel", wrap=False))
+        texts.addWidget(self._text(description, "BadgeText", wrap=False))
+        row.addLayout(texts, 1)
+        row.addWidget(kbd, 0, QtCore.Qt.AlignVCenter)
         layout.addLayout(row)
+        return box
+
+    # --- Montagem da interface ---------------------------------------------
 
     def _setup_ui(self):
         root_layout = QtWidgets.QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        root_layout.addWidget(self._build_header())
+
         scroll_area = QtWidgets.QScrollArea(self)
         self.scroll_area = scroll_area
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll_area.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignTop)
         content_widget = QtWidgets.QWidget()
         content_widget.setObjectName("Content")
+        content_widget.setMaximumWidth(1240)
         main_layout = QtWidgets.QVBoxLayout(content_widget)
-        main_layout.setContentsMargins(24, 20, 24, 18)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(24, 20, 24, 20)
+        main_layout.setSpacing(16)
 
-        header = QtWidgets.QHBoxLayout()
-        header.setSpacing(14)
-        self.logo_label = QtWidgets.QLabel()
+        main_layout.addWidget(self._build_hero())
+
+        columns = QtWidgets.QHBoxLayout()
+        columns.setSpacing(16)
+        self.col_left_w = QtWidgets.QWidget()
+        self.col_left = QtWidgets.QVBoxLayout(self.col_left_w)
+        self.col_right_w = QtWidgets.QWidget()
+        self.col_right = QtWidgets.QVBoxLayout(self.col_right_w)
+        for layout in (self.col_left, self.col_right):
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(16)
+        columns.addWidget(self.col_left_w, 1, QtCore.Qt.AlignTop)
+        columns.addWidget(self.col_right_w, 1, QtCore.Qt.AlignTop)
+        main_layout.addLayout(columns)
+        main_layout.addStretch()
+
+        self.engine_card = self._build_engine_card()
+        self.mic_card = self._build_mic_card()
+        self.trans_card = self._build_translation_card()
+        self.input_card = self._build_input_card()
+        self._cards = [self.engine_card, self.mic_card, self.trans_card, self.input_card]
+
+        scroll_area.setWidget(content_widget)
+        root_layout.addWidget(scroll_area, 1)
+        # A ação de salvar fica sempre alcançável, mesmo com o editor expandido.
+        root_layout.addWidget(self._build_footer())
+
+        self._connect_signals()
+        self._arrange_columns()
+        self._arrange_hero()
+
+    def _build_header(self):
+        self.header_bar = QtWidgets.QWidget()
+        self.header_bar.setObjectName("HeaderBar")
+        self.header_bar.setFixedHeight(64)
+        header = QtWidgets.QHBoxLayout(self.header_bar)
+        header.setContentsMargins(24, 0, 24, 0)
+        header.setSpacing(12)
+        self.logo_label = QtWidgets.QLabel(self.header_bar)
         self.logo_label.hide()
-        self.header_badge = _HeaderLogoBadge(self.current_theme, self)
+        self.header_badge = _HeaderLogoBadge(self.current_theme, self.header_bar)
         header.addWidget(self.header_badge)
         titles = QtWidgets.QVBoxLayout()
         titles.setSpacing(1)
-        titles.addWidget(self._text("Sua voz, direto ao texto.", "SubtitleLabel"))
-        titles.addWidget(self._text("Dita-eu", "TitleLabel"))
-        header.addLayout(titles, 1)
+        for label in (self._text("Dita-eu", "TitleLabel", wrap=False),
+                      self._text("Sua voz, direto ao texto.", "SubtitleLabel", wrap=False)):
+            label.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+            titles.addWidget(label)
+        header.addLayout(titles)
+        header.setAlignment(titles, QtCore.Qt.AlignVCenter)
+        header.addStretch(1)
         self.btn_collapse_edge = QtWidgets.QPushButton("«")
         self.btn_collapse_edge.setObjectName("CollapseEdgeBtn")
-        self.btn_collapse_edge.setFixedSize(36, 36)
+        self.btn_collapse_edge.setFixedHeight(36)
         self.btn_collapse_edge.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.btn_collapse_edge.setToolTip("Recolher para a borda")
         self.btn_collapse_edge.setAccessibleName("Recolher para a borda")
@@ -402,104 +486,163 @@ class SettingsWindow(QtWidgets.QWidget):
         self.theme_switch = ThemeSelector(self.current_theme in ("dark", "dark_andre"), self.current_theme)
         self.theme_switch.toggled.connect(self._on_theme_switch_toggled)
         header.addWidget(self.theme_switch)
-        main_layout.addLayout(header)
+        return self.header_bar
 
-        hero = self._card(main_layout)
-        hero_row = QtWidgets.QHBoxLayout()
-        hero_row.setContentsMargins(0, 9, 0, 9)
-        hero_row.setSpacing(18)
+    def _build_hero(self):
+        self.hero_card = HeroCard()
+        self.hero_grid = QtWidgets.QGridLayout(self.hero_card)
+        self.hero_grid.setContentsMargins(20, 20, 20, 20)
+        self.hero_grid.setHorizontalSpacing(16)
+        self.hero_grid.setVerticalSpacing(14)
         self.ready_visual = ReadyVisual()
-        hero_row.addWidget(self.ready_visual)
-        hero_text = QtWidgets.QVBoxLayout()
-        hero_text.setSpacing(5)
-        hero_title_row = QtWidgets.QHBoxLayout()
-        hero_title_row.setContentsMargins(0, 0, 0, 0)
-        hero_title_row.setSpacing(8)
-        hero_title_row.addWidget(self._text("Pronto para ouvir", "SectionTitle"))
+
+        self.hero_text_w = QtWidgets.QWidget()
+        text = QtWidgets.QVBoxLayout(self.hero_text_w)
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setSpacing(6)
+        # O selo "Ativo" desce para a linha de baixo quando a janela é muito estreita.
+        title_row = FlowLayout(hspacing=10, vspacing=4)
+        title_row.addWidget(self._text("Pronto para ouvir", "HeroTitle", wrap=False))
         self.status_pill = QtWidgets.QLabel("● Ativo")
         self.status_pill.setObjectName("StatusPill")
-        hero_title_row.addWidget(self.status_pill)
-        hero_title_row.addStretch()
-        hero_text.addLayout(hero_title_row)
+        title_row.addWidget(self.status_pill)
+        text.addLayout(title_row)
         self.ready_hint = self._text("", "HintLabel")
-        hero_text.addWidget(self.ready_hint)
-        hero_row.addLayout(hero_text, 1)
-        self.hero_arrow_badge = QtWidgets.QLabel("↗")
-        self.hero_arrow_badge.setObjectName("HeroArrowBadge")
-        self.hero_arrow_badge.setFixedSize(34, 34)
-        self.hero_arrow_badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        hero_row.addWidget(self.hero_arrow_badge)
-        hero.addLayout(hero_row)
-        self._update_shortcut_hint()
+        text.addWidget(self.ready_hint)
 
-        main_layout.addWidget(self._text("Configurações", "SectionTitle"))
-        settings = self._card(main_layout)
+        self.hero_badges_w = QtWidgets.QWidget()
+        badges = QtWidgets.QVBoxLayout(self.hero_badges_w)
+        badges.setContentsMargins(0, 0, 0, 0)
+        badges.setSpacing(8)
+        self.hero_ptt_kbd = self._kbd("F8")
+        self.hero_transform_kbd = self._kbd("SHIFT + F8")
+        badges.addWidget(self._hotkey_badge("Push-to-Talk", "Segurar para ditar", self.hero_ptt_kbd))
+        badges.addWidget(self._hotkey_badge("Voice Transform", "Selecionar texto + comando",
+                                            self.hero_transform_kbd))
+        self._update_shortcut_hint()
+        return self.hero_card
+
+    def _build_engine_card(self):
+        card, body = self._make_card("Configurações do motor", "Reconhecimento de voz", "engine")
+        body.addWidget(self._field_label("Motor de transcrição"))
         self.engine_combo = ComboBox()
-        self.engine_combo.setMinimumWidth(155)
         self.engine_combo.addItem("Groq Whisper", "groq")
         self.engine_combo.addItem("Google Gemini", "gemini")
         self.engine_combo.addItem("Local · offline", "local")
         self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(self.config.get("engine", "groq"))))
-        self._row(settings, "engine", "Motor de transcrição", self.engine_combo,
-                  "Reconhecimento de voz")
+        body.addWidget(self.engine_combo)
+        body.addWidget(self._build_local_card())
+        return card
 
-        # Modelo offline: só aparece com o motor local e é baixado sob demanda.
-        local_layout = self._card(main_layout)
-        self.local_card = local_layout.parentWidget()
-        self.local_model_combo = ComboBox()
-        self.local_model_combo.setMinimumWidth(155)
+    def _build_local_card(self):
+        """Modelo offline: só aparece com o motor local e é baixado sob demanda."""
+        self.local_card, layout = self._inner_card((16, 14, 16, 16), 12)
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(10)
+        head.addWidget(LineIcon("disk", 20))
+        head.addWidget(self._text("Modelo offline", "CardTitle", wrap=False))
+        head.addStretch()
+        layout.addLayout(head)
+        layout.addWidget(self._text("Processado neste computador, sem internet e sem cota de API", "HintLabel"))
+
+        # O combo oculto segue como fonte da verdade; os cartões apenas o refletem.
+        self.local_model_combo = ComboBox(self)
+        self.local_model_combo.hide()
+        self.model_cards = {}
+        self.model_cards_layout = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight)
+        self.model_cards_layout.setSpacing(10)
+        self.model_group = ChoiceGroup(self.local_model_combo, self)
         for size, mb in local_transcriber.MODEL_SIZES.items():
             label = "Base · rápido" if size == "base" else "Small · mais preciso"
             self.local_model_combo.addItem(f"{label} (~{mb} MB)", size)
+            card = OptionCard(label, f"~{mb} MB")
+            self.model_cards[size] = card
+            self.model_group.add(card, size)
+            self.model_cards_layout.addWidget(card, 1)
         self.local_model_combo.setCurrentIndex(
             max(0, self.local_model_combo.findData(self.config.get("local_model_size", local_transcriber.DEFAULT_MODEL_SIZE))))
-        self._row(local_layout, "engine", "Modelo offline", self.local_model_combo,
-                  "Processado neste computador, sem internet e sem cota de API")
+        self.model_group.sync()
+        layout.addLayout(self.model_cards_layout)
+
+        action = QtWidgets.QHBoxLayout()
         self.local_download_btn = QtWidgets.QPushButton()
         self.local_download_btn.setObjectName("SecondaryBtn")
         self.local_download_btn.clicked.connect(self._download_local_model)
-        self._row(local_layout, "document", "Download do modelo", self.local_download_btn)
+        action.addWidget(self.local_download_btn)
+        action.addStretch()
+        layout.addLayout(action)
         self.local_status = self._text("", "HintLabel")
-        local_layout.addWidget(self.local_status)
+        layout.addWidget(self.local_status)
         self._download_thread = None
         self._refresh_local_ui()
-        self.trans_combo = ComboBox()
-        self.trans_combo.setMinimumWidth(155)
+        return self.local_card
+
+    def _build_mic_card(self):
+        card, body = self._make_card("Microfone de entrada", "Dispositivo de captura do ditado", "mic")
+        body.addWidget(self._field_label("Dispositivo de captura"))
+        self.mic_combo = ComboBox()
+        self.mic_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.mic_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.mic_combo.setMinimumContentsLength(10)
+        self._populate_microphones()
+        body.addWidget(self.mic_combo)
+        return card
+
+    def _build_translation_card(self):
+        card, body = self._make_card("Tradução e modo livre", "Idioma do texto de saída e estilos de escrita",
+                                     "language")
+        body.addWidget(self._field_label("Destino de linguagem"))
+        # O combo oculto segue como fonte da verdade (configuração, bandeja, testes).
+        self.trans_combo = ComboBox(self)
+        self.trans_combo.hide()
         for label, value in [("Original · sem tradução", "original"), ("Inglês", "en"),
                              ("Espanhol", "es"), ("Francês", "fr"), ("Alemão", "de"),
                              ("Italiano", "it"), ("Modo livre", "custom")]:
             self.trans_combo.addItem(label, value)
         current_trans = self.config.get("translation_target", "original")
-        index = self.trans_combo.findData(current_trans)
-        self.trans_combo.setCurrentIndex(max(0, index))
-        self._row(settings, "language", "Tradução", self.trans_combo, "Idioma do texto de saída")
+        self.trans_combo.setCurrentIndex(max(0, self.trans_combo.findData(current_trans)))
 
-        self.theme_combo = ComboBox()
-        self.theme_combo.setMinimumWidth(155)
-        self.theme_combo.addItem("Padrão", "dark")
-        self.theme_combo.addItem("Dark André", "dark_andre")
-        self.theme_combo.addItem("Claro", "light")
-        theme_idx = self.theme_combo.findData(self.current_theme)
-        self.theme_combo.setCurrentIndex(max(0, theme_idx))
-        self._row(settings, "palette", "Tema", self.theme_combo, "Aparência da interface")
-        free_mode = self._card(main_layout)
-        self.custom_mode_button = QtWidgets.QPushButton()
+        self.trans_group = ChoiceGroup(self.trans_combo, self)
+        self.lang_grid = AdaptiveGrid(min_cell=118, max_cols=4)
+        for index in range(self.trans_combo.count()):
+            value = self.trans_combo.itemData(index)
+            full_name = self.trans_combo.itemText(index)
+            button = QtWidgets.QPushButton(self.LANGUAGE_LABELS.get(value, full_name))
+            button.setObjectName("OptionBtn")
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setToolTip(full_name)
+            button.setAccessibleName(full_name)
+            if value == "custom":
+                button.setProperty("free", True)
+            self.trans_group.add(button, value)
+            self.lang_grid.add(button, fill_row=(value == "custom"))
+        self.trans_group.sync()
+        body.addWidget(self.lang_grid)
+
+        # Atalho de compatibilidade: alterna o modo livre como o botão antigo.
+        self.custom_mode_button = QtWidgets.QPushButton(self)
         self.custom_mode_button.setObjectName("SecondaryBtn")
         self.custom_mode_button.clicked.connect(self._toggle_custom_mode)
-        self._row(free_mode, "document", "Modo livre", self.custom_mode_button,
-                  "Personalidades e instruções de escrita")
+        self.custom_mode_button.hide()
 
-        self.custom_prompt_box = QtWidgets.QWidget()
-        self.custom_prompt_box.setObjectName("CardBox")
-        custom_box_layout = QtWidgets.QVBoxLayout(self.custom_prompt_box)
-        custom_box_layout.setContentsMargins(14, 12, 14, 12)
-        custom_box_layout.setSpacing(8)
+        body.addWidget(self._build_custom_prompt_box(current_trans))
+        self._update_custom_mode_button()
+        return card
 
-        custom_title = QtWidgets.QLabel("Personalidade / Prompt do Modo Livre:")
-        custom_title.setObjectName("CardTitle")
+    def _build_custom_prompt_box(self, current_trans):
+        self.custom_prompt_box, layout = self._inner_card((16, 14, 16, 16), 12)
 
-        self.preset_combo = ComboBox()
-        self.preset_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(10)
+        head.addWidget(self._text("Presets de personalidade", "CardTitle", wrap=False))
+        head.addStretch()
+        self.preset_count_badge = QtWidgets.QLabel("")
+        self.preset_count_badge.setObjectName("MonoBadge")
+        head.addWidget(self.preset_count_badge)
+        layout.addLayout(head)
+
+        self.preset_combo = ComboBox(self)
+        self.preset_combo.hide()
         self.preset_combo.addItem("✉️ Email Prytter", "email_prytter")
         self.preset_combo.addItem("🎮 Jogador de Dota 2 estressado", "dota")
         self.preset_combo.addItem("🏴‍☠️ Linguagem Pirata", "pirata")
@@ -509,6 +652,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.preset_combo.addItem("🥩 Tiozão do Churrasco", "tiozao_churrasco")
         self.preset_combo.addItem("🎬 Trailer de Cinema Anos 90", "trailer_cinema")
         self.preset_combo.addItem("✍️ Prompt Livre / Customizado", "livre")
+        self.preset_count_badge.setText(f"{self.preset_combo.count()} perfis")
 
         saved_preset = self.config.get("custom_preset", "email_prytter")
         for i in range(self.preset_combo.count()):
@@ -516,94 +660,119 @@ class SettingsWindow(QtWidgets.QWidget):
                 self.preset_combo.setCurrentIndex(i)
                 break
 
+        self.preset_group = ChoiceGroup(self.preset_combo, self)
+        chips = QtWidgets.QWidget()
+        flow = FlowLayout(chips, 8, 8)
+        for index in range(self.preset_combo.count()):
+            # Os chips não repetem o emoji do combo; o nome já identifica a personalidade.
+            name = re.sub(r"^[^\w]+", "", self.preset_combo.itemText(index))
+            chip = QtWidgets.QPushButton(name)
+            chip.setObjectName("Chip")
+            chip.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            chip.setAccessibleName(name)
+            self.preset_group.add(chip, self.preset_combo.itemData(index), mark="  ✓")
+            flow.addWidget(chip)
+        self.preset_group.sync()
+        layout.addWidget(chips)
+
+        layout.addWidget(self._field_label("Instrução do modo livre"))
         self.custom_prompt_edit = QtWidgets.QPlainTextEdit()
+        self.custom_prompt_edit.setObjectName("PromptEdit")
         self.custom_prompt_edit.setPlaceholderText("Escreva a instrução de como o texto ditado deve ser reescrito...")
-        self.custom_prompt_edit.setFixedHeight(95)
-        saved_prompt = config_manager.get_preset_prompt(self.config, saved_preset)
-        self.custom_prompt_edit.setPlainText(saved_prompt)
+        self.custom_prompt_edit.setFixedHeight(112)
+        self.custom_prompt_edit.setPlainText(config_manager.get_preset_prompt(self.config, saved_preset))
+        layout.addWidget(self.custom_prompt_edit)
 
         # Botões de Ação do Prompt: Salvar Edição e Restaurar Padrão de Fábrica
         prompt_actions_layout = QtWidgets.QHBoxLayout()
         prompt_actions_layout.setSpacing(8)
-        self.btn_save_prompt = QtWidgets.QPushButton("Salvar Prompt")
-        self.btn_save_prompt.setObjectName("SecondaryBtn")
-        self.btn_save_prompt.clicked.connect(self._save_prompt_clicked)
-
         self.btn_reset_prompt = QtWidgets.QPushButton("Restaurar Padrão")
         self.btn_reset_prompt.setObjectName("SecondaryBtn")
         self.btn_reset_prompt.clicked.connect(self._reset_prompt_clicked)
-
-        prompt_actions_layout.addWidget(self.btn_save_prompt)
-        prompt_actions_layout.addWidget(self.btn_reset_prompt)
+        self.btn_save_prompt = QtWidgets.QPushButton("Salvar Prompt")
+        self.btn_save_prompt.setObjectName("SecondaryBtn")
+        self.btn_save_prompt.clicked.connect(self._save_prompt_clicked)
         prompt_actions_layout.addStretch()
+        prompt_actions_layout.addWidget(self.btn_reset_prompt)
+        prompt_actions_layout.addWidget(self.btn_save_prompt)
+        layout.addLayout(prompt_actions_layout)
 
-        preset_hint = QtWidgets.QLabel("Escolha uma personalidade pronta ou edite a instrução livremente. O texto ditado no F8 será adaptado conforme esse comando.")
-        preset_hint.setObjectName("HintLabel")
-        preset_hint.setWordWrap(True)
-
-        custom_box_layout.addWidget(custom_title)
-        custom_box_layout.addWidget(self.preset_combo)
-        custom_box_layout.addWidget(self.custom_prompt_edit)
-        custom_box_layout.addLayout(prompt_actions_layout)
-        custom_box_layout.addWidget(preset_hint)
-
+        layout.addWidget(self._text(
+            "Escolha uma personalidade pronta ou edite a instrução livremente. "
+            "O texto ditado no F8 será adaptado conforme esse comando.", "HintLabel"))
         self.custom_prompt_box.setVisible(current_trans == "custom")
-        main_layout.addWidget(self.custom_prompt_box)
+        return self.custom_prompt_box
 
-        self._update_custom_mode_button()
-        main_layout.addWidget(self._text("Entrada e atalhos", "SectionTitle"))
-        inputs = self._card(main_layout)
-        shortcut_control = QtWidgets.QWidget()
-        shortcut_row = QtWidgets.QHBoxLayout(shortcut_control)
-        shortcut_row.setContentsMargins(0, 0, 0, 0)
-        shortcut_row.setSpacing(8)
+    def _build_input_card(self):
+        card, body = self._make_card("Entrada e atalhos", "Atalhos globais, pílula e integração com o Windows",
+                                     "keyboard")
+
+        # Atalho de ditado (editável) e Voice Transform (somente leitura).
+        dictate, dictate_layout = self._inner_card()
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(10)
+        texts = QtWidgets.QVBoxLayout()
+        texts.setSpacing(2)
+        texts.addWidget(self._text("Atalho de ditado", "CardTitle"))
+        texts.addWidget(self._text("Segure e fale", "HintLabel"))
+        row.addLayout(texts, 1)
         current_combo = " + ".join(k.upper() for k in self.config.get("trigger_keys", ["f8"]))
         self.shortcut_input = QtWidgets.QLineEdit(current_combo)
+        self.shortcut_input.setObjectName("KbdInput")
         self.shortcut_input.setReadOnly(True)
-        self.shortcut_input.setFixedWidth(100)
         self.shortcut_input.setAlignment(QtCore.Qt.AlignCenter)
+        self._fit_shortcut_input()
         self.btn_record_key = QtWidgets.QPushButton("Alterar")
         self.btn_record_key.setObjectName("SecondaryBtn")
         self.btn_record_key.clicked.connect(self._record_key)
-        shortcut_row.addWidget(self.shortcut_input)
-        shortcut_row.addWidget(self.btn_record_key)
-        transform_keys = " + ".join(k.upper().replace("+", " + ") for k in
-                                    self.config.get("transform_trigger_keys", ["shift+f8"]))
-        self._row(inputs, "keyboard", "Atalho de ditado", shortcut_control,
-                  "Transformar seleção: " + transform_keys)
-        self.mic_combo = ComboBox()
-        self.mic_combo.setMinimumWidth(140)
-        self.mic_combo.setMaximumWidth(240)
-        self.mic_combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-        self.mic_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self._populate_microphones()
-        self._row(inputs, "mic", "Microfone de entrada", self.mic_combo)
+        row.addWidget(self.shortcut_input)
+        row.addWidget(self.btn_record_key)
+        dictate_layout.addLayout(row)
+        body.addWidget(dictate)
+
+        self.transform_kbd = self._kbd("SHIFT + F8")
+        body.addWidget(self._hotkey_badge("Voice Transform", "Reescrever seleção", self.transform_kbd))
+        self._update_shortcut_hint()
+
+        # Posição da pílula: valor em px e controle deslizante.
+        position, position_layout = self._inner_card((14, 12, 14, 14), 10)
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(10)
+        head_texts = QtWidgets.QVBoxLayout()
+        head_texts.setSpacing(2)
+        head_texts.addWidget(self._text("Posição da pílula", "CardTitle"))
+        head_texts.addWidget(self._text("Distância vertical em relação à base da tela", "HintLabel"))
+        head.addLayout(head_texts, 1)
         self.hud_spin = QtWidgets.QSpinBox()
+        self.hud_spin.setObjectName("PositionSpin")
         self.hud_spin.setRange(50, 1000)
         self.hud_spin.setValue(self.config.get("hud_bottom_offset", 350))
         self.hud_spin.setSuffix(" px")
         self.hud_spin.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+        self.hud_spin.setAlignment(QtCore.Qt.AlignCenter)
         self.hud_spin.setFixedWidth(92)
+        head.addWidget(self.hud_spin, 0, QtCore.Qt.AlignTop)
+        position_layout.addLayout(head)
         self.hud_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.hud_slider.setTracking(False)
         self.hud_slider.setRange(50, 1000)
         self.hud_slider.setValue(self.hud_spin.value())
         self.hud_slider.setMinimumWidth(75)
-        self.hud_slider.setMaximumWidth(160)
         self.hud_slider.setAccessibleName("Distância da pílula à base da tela")
         self.hud_slider.valueChanged.connect(self.hud_spin.setValue)
         self.hud_spin.valueChanged.connect(self.hud_slider.setValue)
-        position = QtWidgets.QWidget()
-        position_row = QtWidgets.QHBoxLayout(position)
-        position_row.setContentsMargins(0, 0, 0, 0)
-        position_row.setSpacing(10)
-        position_row.addWidget(self.hud_slider)
-        position_row.addWidget(self.hud_spin)
-        self._row(inputs, "screen", "Posição da pílula", position)
+        slider_row = QtWidgets.QHBoxLayout()
+        slider_row.setSpacing(10)
+        slider_row.addWidget(self._text("50 px", "RangeLabel", wrap=False))
+        slider_row.addWidget(self.hud_slider, 1)
+        slider_row.addWidget(self._text("1000 px", "RangeLabel", wrap=False))
+        position_layout.addLayout(slider_row)
+        body.addWidget(position)
+
         self.autostart_switch = ToggleSwitch(self, self.config.get("autostart", False), self.current_theme)
         self.autostart_switch.setAccessibleName("Iniciar com o Windows")
-        self._row(inputs, "windows", "Iniciar com o Windows", self.autostart_switch,
-                  "Executar em segundo plano ao ligar")
+        body.addWidget(self._setting_row("windows", "Iniciar com o Windows",
+                                         "Executar em segundo plano ao ligar", self.autostart_switch))
 
         self.edge_widget_switch = None
         self.edge_pos_container = None
@@ -616,30 +785,19 @@ class SettingsWindow(QtWidgets.QWidget):
             )
             self.edge_widget_switch = ToggleSwitch(self, edge_enabled, self.current_theme)
             self.edge_widget_switch.setAccessibleName("Meia-lua na borda")
-            self._row(
-                inputs,
-                "dock",
-                "Meia-lua na borda (Windows)",
-                self.edge_widget_switch,
-                "Mostra ao encostar na borda esquerda e recolhe ao clicar fora",
-            )
 
+            # Rótulo e segmentos ficam lado a lado em janela larga e empilhados em janela estreita.
             self.edge_pos_container = QtWidgets.QWidget()
-            edge_pos_vbox = QtWidgets.QVBoxLayout(self.edge_pos_container)
-            edge_pos_vbox.setContentsMargins(0, 2, 0, 10)
-            edge_pos_vbox.setSpacing(8)
-
-            pos_divider = QtWidgets.QFrame()
-            pos_divider.setObjectName("Divider")
-            pos_divider.setFixedHeight(1)
-            edge_pos_vbox.addWidget(pos_divider)
-
-            pos_label = self._text("Posição na borda esquerda", "HintLabel")
-            edge_pos_vbox.addWidget(pos_label)
-
-            pos_row = QtWidgets.QHBoxLayout()
-            pos_row.setContentsMargins(0, 0, 0, 0)
-            pos_row.setSpacing(6)
+            self.edge_pos_layout = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight,
+                                                        self.edge_pos_container)
+            self.edge_pos_layout.setContentsMargins(32, 0, 0, 0)
+            self.edge_pos_layout.setSpacing(8)
+            self.edge_pos_layout.addWidget(self._text("Posição na borda esquerda", "HintLabel"), 1)
+            segments = QtWidgets.QWidget()
+            segments.setObjectName("SegmentBox")
+            segments_layout = QtWidgets.QHBoxLayout(segments)
+            segments_layout.setContentsMargins(3, 3, 3, 3)
+            segments_layout.setSpacing(2)
             self.edge_pos_group = QtWidgets.QButtonGroup(self)
             self.edge_pos_group.setExclusive(True)
             for pos_id, pos_title in (("top", "Superior"), ("middle", "Meio"), ("bottom", "Inferior")):
@@ -651,25 +809,49 @@ class SettingsWindow(QtWidgets.QWidget):
                 btn.setProperty("edge_position", pos_id)
                 self.edge_pos_group.addButton(btn)
                 self.edge_pos_buttons[pos_id] = btn
-                pos_row.addWidget(btn, 1)
-            edge_pos_vbox.addLayout(pos_row)
-            inputs.addWidget(self.edge_pos_container)
+                segments_layout.addWidget(btn, 1)
+            self.edge_pos_layout.addWidget(segments)
+            body.addWidget(self._setting_row(
+                "dock", "Meia-lua na borda (Windows)",
+                "Mostra ao encostar na borda esquerda e recolhe ao clicar fora",
+                self.edge_widget_switch, extra=self.edge_pos_container))
             self.edge_pos_container.setVisible(edge_enabled)
             self.edge_widget_switch.toggled.connect(self._on_edge_widget_toggled)
             self.edge_pos_group.buttonClicked.connect(self._on_field_changed)
 
-        main_layout.addStretch()
-        scroll_area.setWidget(content_widget)
-        root_layout.addWidget(scroll_area, 1)
-        # The save action remains reachable even with the custom editor expanded.
-        footer = QtWidgets.QHBoxLayout()
-        footer.setContentsMargins(24, 10, 24, 18)
-        self.btn_save = QtWidgets.QPushButton("Salvar configurações")
-        self.btn_save.setMinimumHeight(44)
-        self.btn_save.clicked.connect(self._manual_save_clicked)
-        footer.addWidget(self.btn_save)
-        root_layout.addLayout(footer)
+        self.theme_combo = ComboBox()
+        self.theme_combo.setMinimumWidth(150)
+        self.theme_combo.addItem("Padrão", "dark")
+        self.theme_combo.addItem("Dark André", "dark_andre")
+        self.theme_combo.addItem("Claro", "light")
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(self.current_theme)))
+        body.addWidget(self._setting_row("palette", "Tema", "Aparência da interface", self.theme_combo))
+        return card
 
+    def _build_footer(self):
+        self.footer_bar = QtWidgets.QWidget()
+        self.footer_bar.setObjectName("FooterBar")
+        layout = QtWidgets.QHBoxLayout(self.footer_bar)
+        layout.setContentsMargins(24, 12, 24, 12)
+        layout.setSpacing(14)
+        self.footer_status_w = QtWidgets.QWidget()
+        status = QtWidgets.QHBoxLayout(self.footer_status_w)
+        status.setContentsMargins(0, 0, 0, 0)
+        status.setSpacing(8)
+        dot = QtWidgets.QLabel()
+        dot.setObjectName("StatusDot")
+        status.addWidget(dot, 0, QtCore.Qt.AlignVCenter)
+        status.addWidget(self._text("Alterações salvas automaticamente", "FooterStatus", wrap=False))
+        layout.addWidget(self.footer_status_w)
+        layout.addStretch(1)
+        self.btn_save = QtWidgets.QPushButton("Salvar configurações")
+        self.btn_save.setMinimumHeight(40)
+        self.btn_save.setMinimumWidth(190)
+        self.btn_save.clicked.connect(self._manual_save_clicked)
+        layout.addWidget(self.btn_save)
+        return self.footer_bar
+
+    def _connect_signals(self):
         self.engine_combo.currentIndexChanged.connect(self._on_field_changed)
         self.local_model_combo.currentIndexChanged.connect(self._on_field_changed)
         self.trans_combo.currentIndexChanged.connect(self._on_trans_combo_changed)
@@ -686,9 +868,86 @@ class SettingsWindow(QtWidgets.QWidget):
                              (self.shortcut_input, "Atalho de ditado")):
             widget.setAccessibleName(name)
 
+    # --- Layout responsivo ---------------------------------------------------
+
+    def _arrange_columns(self):
+        """Duas colunas em janela larga; uma coluna na janela estreita (meia-lua)."""
+        for layout in (self.col_left, self.col_right):
+            while layout.count():
+                layout.takeAt(0)
+        if self._wide_layout:
+            left, right = self._cards[:2], self._cards[2:]
+        else:
+            left, right = self._cards, []
+        for card in left:
+            self.col_left.addWidget(card)
+        for card in right:
+            self.col_right.addWidget(card)
+        self.col_left.addStretch(1)
+        self.col_right.addStretch(1)
+        self.col_right_w.setVisible(self._wide_layout)
+
+    def _arrange_hero(self):
+        """Atalhos ao lado do texto em janela larga e abaixo dele em janela estreita."""
+        for widget in (self.ready_visual, self.hero_text_w, self.hero_badges_w):
+            self.hero_grid.removeWidget(widget)
+        self.hero_grid.addWidget(self.ready_visual, 0, 0, QtCore.Qt.AlignVCenter)
+        self.hero_grid.addWidget(self.hero_text_w, 0, 1, QtCore.Qt.AlignVCenter)
+        if self._wide_layout:
+            self.hero_grid.addWidget(self.hero_badges_w, 0, 2, QtCore.Qt.AlignVCenter)
+            self.hero_grid.setColumnStretch(1, 1)
+            self.hero_grid.setColumnStretch(2, 0)
+        else:
+            self.hero_grid.addWidget(self.hero_badges_w, 1, 0, 1, 2)
+            self.hero_grid.setColumnStretch(1, 1)
+            self.hero_grid.setColumnStretch(2, 0)
+
+    def _apply_compact(self):
+        compact = self._compact_layout
+        self.footer_status_w.setVisible(not compact)
+        self.footer_bar.layout().setStretchFactor(self.btn_save, 1 if compact else 0)
+        if compact:
+            self.btn_collapse_edge.setText("«")
+            self.btn_collapse_edge.setFixedWidth(36)
+        else:
+            self.btn_collapse_edge.setText("«  Recolher para borda")
+            self.btn_collapse_edge.setMinimumWidth(0)
+            self.btn_collapse_edge.setMaximumWidth(16777215)
+        direction = QtWidgets.QBoxLayout.TopToBottom if compact else QtWidgets.QBoxLayout.LeftToRight
+        self.model_cards_layout.setDirection(direction)
+        if self.edge_pos_container is not None:
+            self.edge_pos_layout.setDirection(direction)
+
+    def _apply_responsive(self, force=False):
+        wide = self.width() >= self.WIDE_BREAKPOINT
+        compact = self.width() < self.COMPACT_BREAKPOINT
+        if force or wide != self._wide_layout:
+            self._wide_layout = wide
+            self._arrange_columns()
+            self._arrange_hero()
+        if force or compact != self._compact_layout:
+            self._compact_layout = compact
+            self._apply_compact()
+
+    # --- Comportamento -------------------------------------------------------
+
     def _update_shortcut_hint(self):
         combo = " + ".join(k.upper() for k in self.config.get("trigger_keys", ["f8"]))
+        transform = " + ".join(k.upper().replace("+", " + ") for k in
+                               self.config.get("transform_trigger_keys", ["shift+f8"]))
         self.ready_hint.setText(f"Segure {combo} para ditar em qualquer aplicativo.")
+        self.hero_ptt_kbd.setText(combo)
+        self.hero_transform_kbd.setText(transform)
+        if hasattr(self, "transform_kbd"):
+            self.transform_kbd.setText(transform)
+
+    def _fit_shortcut_input(self):
+        """Ajusta a largura do campo ao texto do atalho (ex.: CTRL + SHIFT + F12)."""
+        font = QtGui.QFont(font_family("mono"))
+        font.setPixelSize(12)
+        font.setBold(True)
+        width = QtGui.QFontMetrics(font).horizontalAdvance(self.shortcut_input.text()) + 36
+        self.shortcut_input.setFixedWidth(max(96, min(230, width)))
 
     def _update_custom_mode_button(self):
         self.custom_mode_button.setText("Ativado  ›" if self.trans_combo.currentData() == "custom"
@@ -750,6 +1009,7 @@ class SettingsWindow(QtWidgets.QWidget):
                 self.trans_combo.setCurrentIndex(i)
                 break
         self.trans_combo.blockSignals(False)
+        self.trans_group.sync()
         self.custom_prompt_box.setVisible(target == "custom")
         self._update_custom_mode_button()
         self.config["translation_target"] = target
@@ -758,7 +1018,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self.mic_combo.blockSignals(True)
         self.mic_combo.addItem("Padrão do Sistema", None)
         saved_index = self.config.get("microphone_index")
-        
+
         try:
             devices = sd.query_devices()
             selected_pos = 0
@@ -782,6 +1042,7 @@ class SettingsWindow(QtWidgets.QWidget):
                 self.config["trigger_keys"] = dialog.detected_keys
                 combo_text = " + ".join([k.upper() for k in dialog.detected_keys])
                 self.shortcut_input.setText(combo_text)
+                self._fit_shortcut_input()
                 self._update_shortcut_hint()
                 self._save_settings(feedback=False)
 
@@ -793,9 +1054,13 @@ class SettingsWindow(QtWidgets.QWidget):
         """Mostra o card offline só com o motor local e reflete o estado do download."""
         self.local_card.setVisible(self.engine_combo.currentData() == "local")
         size = self.local_model_combo.currentData()
+        available = local_transcriber.is_available()
+        for model_size, card in self.model_cards.items():
+            ready = available and local_transcriber.is_model_downloaded(model_size)
+            card.set_state("Instalado" if ready else ("Não baixado" if available else "Indisponível"), ready)
         if self._download_thread is not None and self._download_thread.isRunning():
             return
-        if not local_transcriber.is_available():
+        if not available:
             self.local_download_btn.setEnabled(False)
             self.local_download_btn.setText("Indisponível")
             self.local_status.setText("Esta versão do aplicativo não inclui o motor offline.")
