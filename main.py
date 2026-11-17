@@ -30,7 +30,7 @@ from injector import (
 )
 from overlay import FloatingHUD
 from settings_ui import SettingsWindow
-from ui_components import palette
+from ui_components import font_family, load_fonts, palette
 from edge_widget import EdgeWidgetService, QtWindowAdapter
 
 def get_resource_path(relative_path: str) -> str:
@@ -225,11 +225,13 @@ class DictationApp(QtCore.QObject):
         c = palette(self.config.get("theme", "dark"))
         self.tray_menu.setStyleSheet(f"""
             QMenu {{ background: {c['card']}; color: {c['text']};
-                border: 1px solid {c['border']}; padding: 5px; }}
-            QMenu::item {{ padding: 7px 24px; border-radius: 5px; }}
+                border: 1px solid {c['border']}; padding: 6px;
+                font-family: '{font_family('body')}'; font-size: 13px; }}
+            QMenu::item {{ padding: 8px 24px; border-radius: 6px; }}
             QMenu::item:selected {{ background: {c['hover']}; }}
             QMenu::item:checked {{ color: {c['accent']}; font-weight: bold; }}
             QMenu::item:disabled {{ color: {c['muted']}; }}
+            QMenu::separator {{ height: 1px; background: {c['border']}; margin: 5px 8px; }}
         """)
 
     def _update_tray_tooltip(self):
@@ -710,6 +712,7 @@ def main():
         args.exc_type, args.exc_value, args.exc_traceback)
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    load_fonts()  # Inter, JetBrains Mono e Plus Jakarta Sans de fonts/ (fallback: Segoe UI)
 
     if "--self-test" in sys.argv:
         # Check the packaged native libraries, VAD assets, HUD and Qt event loop
